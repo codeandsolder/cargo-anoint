@@ -70,19 +70,19 @@ struct Patterns {
 impl Patterns {
     fn new() -> Result<Self, regex::Error> {
         Ok(Self {
-            ip_check: regex::Regex::new(r#"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b"#)?,
-            numbers: regex::Regex::new(r#"\b(\d{3,}|\d+\.\d+)\b"#)?,
+            ip_check: regex::Regex::new(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b")?,
+            numbers: regex::Regex::new(r"\b(\d{3,}|\d+\.\d+)\b")?,
             urls: regex::Regex::new(r#"(https?://[^\s"'`<>\)\]]+)"#)?,
             keys: regex::Regex::new(
                 r#"(?i)(api[_-]?key|token|secret|password|passwd|auth[_-]?token)\s*=\s*["']([^"']+)["']"#,
             )?,
             paths: regex::Regex::new(r#"["'](/[a-zA-Z0-9_/.-]+)["']"#)?,
-            ips: regex::Regex::new(r#"\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b"#)?,
+            ips: regex::Regex::new(r"\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b")?,
             credentials: regex::Regex::new(
                 r#"(?i)(password|passwd|pwd)\s*[:=]\s*["']([^"']{3,})["']"#,
             )?,
             timeouts: regex::Regex::new(
-                r#"(?i)(timeout|duration|interval|delay)\s*[:=]\s*(\d+)\s*(ms|seconds?|minutes?|hours?)?"#,
+                r"(?i)(timeout|duration|interval|delay)\s*[:=]\s*(\d+)\s*(ms|seconds?|minutes?|hours?)?",
             )?,
         })
     }
@@ -331,7 +331,7 @@ fn detect_credentials(
     hits: &mut Vec<BSHit>,
     patterns: &Patterns,
 ) {
-    let re = patterns.credentials;
+    let re = &patterns.credentials;
 
     for cap in re.captures_iter(line) {
         let value = &cap[2];
