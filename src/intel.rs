@@ -7,7 +7,8 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::Mutex;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
@@ -72,7 +73,7 @@ impl<T> CacheEntry<T> {
 
 /// Client for fetching live dependency intelligence.
 pub struct IntelClient {
-    client: crates_io_api::SyncClient,
+    last_crates_io_request: Mutex<Option<Instant>>,
     http: reqwest::blocking::Client,
     cache_dir: Option<PathBuf>,
 }
@@ -80,13 +81,11 @@ pub struct IntelClient {
 impl IntelClient {
     /// Create a new IntelClient with crates.io API access and disk cache.
     pub fn new() -> Result<Self> {
-        let client = crates_io_api::SyncClient::new(USER_AGENT, Duration::from_secs(1))
-            .context("failed to create crates.io client")?;
         let http = reqwest::blocking::Client::builder()
             .user_agent(USER_AGENT)
             .timeout(Duration::from_secs(10))
             .build()
-            .context("failed to create GitHub HTTP client")?;
+            .context("failed to create HTTP client")?;
 
         let mut cache_dir = ProjectDirs::from("rs", "", "cargo-anoint")
             .map(|dirs| dirs.cache_dir().to_path_buf())
@@ -104,7 +103,7 @@ impl IntelClient {
         }
 
         Ok(Self {
-            client,
+            last_crates_io_request: Mutex::new(None),
             http,
             cache_dir,
         })
@@ -112,6 +111,13 @@ impl IntelClient {
 
     /// Fetch live intel for a crate. Checks disk cache first (1hr TTL).
     pub fn fetch_crate_intel(&self, name: &str) -> Result<CrateIntel> {
+        anyhow::ensure!(
+            !name.is_empty()
+                && name
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_')),
+            "invalid crate name"
+        );
         // Check cache
         let cache_path = self
             .cache_dir
@@ -129,10 +135,23 @@ impl IntelClient {
         }
 
         // Cache miss or stale — fetch from crates.io
-        let response = self
-            .client
-            .get_crate(name)
-            .with_context(|| format!("failed to fetch crate info for '{}'", name))?;
+        {
+            let mut last = self
+                .last_crates_io_request
+                .lock()
+                .map_err(|_| anyhow::anyhow!("crates.io rate limiter poisoned"))?;
+            if let Some(previous) = *last {
+                std::thread::sleep(Duration::from_secs(1).saturating_sub(previous.elapsed()));
+            }
+            *last = Some(Instant::now());
+        }
+        let response: RegistryResponse = self
+            .http
+            .get(format!("https://crates.io/api/v1/crates/{name}"))
+            .send()
+            .and_then(|r| r.error_for_status())
+            .and_then(|r| r.json())
+            .with_context(|| format!("failed to fetch crate info for {name}"))?;
 
         let crate_data = &response.crate_data;
         let latest_version = response
@@ -146,7 +165,7 @@ impl IntelClient {
             latest_version,
             downloads: crate_data.downloads,
             recent_downloads: crate_data.recent_downloads,
-            last_updated: crate_data.updated_at.to_string(),
+            last_updated: crate_data.updated_at.clone(),
             repository_url: crate_data.repository.clone(),
             description: crate_data.description.clone(),
         };
@@ -202,6 +221,29 @@ impl IntelClient {
         }
         intel
     }
+}
+
+#[derive(Deserialize)]
+struct RegistryResponse {
+    #[serde(rename = "crate")]
+    crate_data: RegistryCrate,
+    #[serde(default)]
+    versions: Vec<RegistryVersion>,
+}
+
+#[derive(Deserialize)]
+struct RegistryCrate {
+    max_version: String,
+    downloads: u64,
+    recent_downloads: Option<u64>,
+    updated_at: String,
+    repository: Option<String>,
+    description: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RegistryVersion {
+    num: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -280,6 +322,15 @@ mod tests {
     fn test_parse_github_url_too_short() {
         assert!(parse_github_url("https://github.com/just-user").is_none());
         assert!(parse_github_url("https://github.com/").is_none());
+    }
+
+    #[test]
+    fn registry_response_matches_crates_io_wire_format() {
+        let response: RegistryResponse = serde_json::from_str(r#"{"crate":{"max_version":"1.2.3","downloads":42,"recent_downloads":null,"updated_at":"2026-11-01T12:00:00Z","repository":"https://github.com/example/example","description":null},"versions":[{"num":"1.2.3","yanked":false}]}"#).unwrap();
+        assert_eq!(response.crate_data.downloads, 42);
+        assert_eq!(response.crate_data.updated_at, "2026-11-01T12:00:00Z");
+        assert_eq!(response.versions[0].num, response.crate_data.max_version);
+        assert_eq!(response.crate_data.recent_downloads, None);
     }
 
     #[test]
