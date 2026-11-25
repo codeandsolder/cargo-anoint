@@ -399,14 +399,16 @@
         "libmount"
       ],
       "preferred": "nix::mount or rustix::mount",
-      "notes": "Use an existing syscall wrapper and preserve overlay escaping, mount flags and byte paths."
+      "notes": "Use an existing syscall wrapper and preserve overlay escaping, mount flags and byte paths.",
+      "include_transitive": true
     },
     {
       "packages": [
         "version-compare"
       ],
       "preferred": "semver",
-      "notes": "Use semver for version strings that follow SemVer, not arbitrary distribution version schemes."
+      "notes": "Use semver for version strings that follow SemVer, not arbitrary distribution version schemes.",
+      "include_transitive": true
     },
     {
       "packages": [
@@ -423,14 +425,16 @@
         "h2"
       ],
       "preferred": "http2 from codeandsolder/cargo-patches where the Wreq transport is used",
-      "notes": "h2 and the Wreq http2 fork are independent package identities. Do not substitute the fork into Hyper blindly; retain h2 if a separate HTTP/2 transport requires it."
+      "notes": "h2 and the Wreq http2 fork are independent package identities. Do not substitute the fork into Hyper blindly; retain h2 if a separate HTTP/2 transport requires it.",
+      "include_transitive": true
     },
     {
       "packages": [
         "ruzstd"
       ],
       "preferred": "zstd where native Zstandard is already used",
-      "notes": "If the caller only parses archive metadata, disable unused object compression. Otherwise consolidate Zstandard decoders when target support and workload permit."
+      "notes": "If the caller only parses archive metadata, disable unused object compression. Otherwise consolidate Zstandard decoders when target support and workload permit.",
+      "include_transitive": true
     },
     {
       "packages": [
@@ -444,7 +448,8 @@
         "webpki-roots"
       ],
       "preferred": "Wreq webpki-roots/native-roots or an explicit btls certificate store",
-      "notes": "Keep trust root representations aligned with the selected TLS stack; webpki-roots and webpki-root-certs are different representations, not drop-in replacements."
+      "notes": "Keep trust root representations aligned with the selected TLS stack; webpki-roots and webpki-root-certs are different representations, not drop-in replacements.",
+      "include_transitive": true
     }
   ],
   "feature_preferences": [
@@ -470,6 +475,24 @@
       ],
       "preferred": "jsonwebtoken-btls from codeandsolder/btls-fast; disable built-in crypto backends",
       "notes": "For compatible native builds, install the btls provider and keep jsonwebtoken validation. Avoid a second native cryptographic stack. Retain other providers only when required by target or application.",
+      "include_transitive": true
+    },
+    {
+      "package": "jsonwebtoken",
+      "competing_features": [
+        "use_pem"
+      ],
+      "preferred": "Disable use_pem if all keys already arrive as JWK components or DER",
+      "notes": "Review call sites before changing the feature; PEM callers need ASN.1 parsing. Removing unused PEM support eliminates simple_asn1 and its transitive dependencies.",
+      "include_transitive": true
+    },
+    {
+      "package": "object",
+      "competing_features": [
+        "compression"
+      ],
+      "preferred": "Disable object compression when only archive or executable metadata is required",
+      "notes": "Compressed debug sections require decompression; do not disable it for consumers that actually read them. Avoid the default Ruzstd backend when not needed.",
       "include_transitive": true
     }
   ]

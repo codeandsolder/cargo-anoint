@@ -317,6 +317,11 @@ mod tests {
             "aws-lc-sys",
             "ring",
             "miniz_oxide",
+            "libmount",
+            "version-compare",
+            "h2",
+            "ruzstd",
+            "webpki-roots",
         ];
         let deps: Vec<_> = removed.iter().map(|name| dep(name, None, false)).collect();
         let findings = analyze(&deps, Some("application"));
@@ -342,6 +347,19 @@ mod tests {
         flate.enabled_features = vec!["zlib-rs".into()];
         jwt.enabled_features.clear();
         assert!(analyze(&[flate, jwt], None).is_empty());
+    }
+
+    #[test]
+    fn unused_format_features_have_conditional_recommendations() {
+        let mut jwt = dep("jsonwebtoken", None, false);
+        jwt.enabled_features = vec!["use_pem".into()];
+        let mut object = dep("object", None, false);
+        object.enabled_features = vec!["compression".into()];
+        let findings = analyze(&[jwt, object], None);
+        assert_eq!(findings.len(), 2);
+        assert!(findings
+            .iter()
+            .all(|f| f.kind == SuggestionKind::FeatureOptimization && !f.is_auto_fixable()));
     }
 
     #[test]
