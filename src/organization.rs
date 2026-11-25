@@ -351,6 +351,25 @@ mod tests {
     }
 
     #[test]
+    fn lru_and_dashboard_preferences() {
+        let mut leptos = dep("leptos_axum", None, false);
+        leptos.enabled_features = vec!["default".into()];
+        let findings = analyze(
+            &[
+                dep("linked-hash-map", None, true),
+                dep("chrono", None, true),
+                leptos,
+            ],
+            None,
+        );
+        for name in ["linked-hash-map", "chrono", "leptos_axum"] {
+            assert!(findings
+                .iter()
+                .any(|finding| finding.current == name && !finding.is_auto_fixable()));
+        }
+    }
+
+    #[test]
     fn unused_format_features_have_conditional_recommendations() {
         let mut jwt = dep("jsonwebtoken", None, false);
         jwt.enabled_features = vec!["use_pem".into()];

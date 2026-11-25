@@ -40,3 +40,16 @@ pbkdf2, pem-rfc7468, pkcs1, pkcs5, pkcs8, salsa20, scrypt, spki and subtle.
 These remain legitimate in other cryptographic and numerical workloads; the
 RSA migration removes the now-unused key parsing and arithmetic chain, not
 all uses of these primitives globally.
+
+
+## LRU and dashboard consolidation
+
+Prefer `lru` for recency-based caching rather than maintaining a second
+linked-hash-map-backed LRU. Weighted storage requires explicit capacity
+accounting and admission/eviction behavior. Prefer Jiff for compatible date/time
+operations when already in the graph. Disable Leptos Axum default features when
+the application only uses ordinary HTTP/SSE server functions; ensure actual
+Tokio filesystem, synchronization and Tower HTTP services stay enabled.
+This removes WebSocket-specific tungstenite, tokio-tungstenite, data-encoding
+and the old SHA1 version from the sccache native release; these remain legitimate
+when WebSockets are actually used.
