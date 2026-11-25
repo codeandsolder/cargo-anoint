@@ -7,8 +7,8 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::sync::Mutex;
 
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
@@ -74,14 +74,14 @@ impl<T> CacheEntry<T> {
 /// Client for fetching live dependency intelligence.
 pub struct IntelClient {
     last_crates_io_request: Mutex<Option<Instant>>,
-    http: reqwest::blocking::Client,
+    http: wreq::Client,
     cache_dir: Option<PathBuf>,
 }
 
 impl IntelClient {
     /// Create a new IntelClient with crates.io API access and disk cache.
     pub fn new() -> Result<Self> {
-        let http = reqwest::blocking::Client::builder()
+        let http = wreq::Client::builder()
             .user_agent(USER_AGENT)
             .timeout(Duration::from_secs(10))
             .build()
@@ -110,7 +110,7 @@ impl IntelClient {
     }
 
     /// Fetch live intel for a crate. Checks disk cache first (1hr TTL).
-    pub fn fetch_crate_intel(&self, name: &str) -> Result<CrateIntel> {
+    pub async fn fetch_crate_intel(&self, name: &str) -> Result<CrateIntel> {
         anyhow::ensure!(
             !name.is_empty()
                 && name
@@ -136,22 +136,23 @@ impl IntelClient {
 
         // Cache miss or stale — fetch from crates.io
         {
-            let mut last = self
-                .last_crates_io_request
-                .lock()
-                .map_err(|_| anyhow::anyhow!("crates.io rate limiter poisoned"))?;
+            let mut last = self.last_crates_io_request.lock().await;
             if let Some(previous) = *last {
-                std::thread::sleep(Duration::from_secs(1).saturating_sub(previous.elapsed()));
+                tokio::time::sleep(Duration::from_secs(1).saturating_sub(previous.elapsed())).await;
             }
             *last = Some(Instant::now());
         }
-        let response: RegistryResponse = self
+        let response = self
             .http
             .get(format!("https://crates.io/api/v1/crates/{name}"))
             .send()
+            .await
             .and_then(|r| r.error_for_status())
-            .and_then(|r| r.json())
             .with_context(|| format!("failed to fetch crate info for {name}"))?;
+        let response: RegistryResponse = response
+            .json()
+            .await
+            .context("failed to decode crates.io response")?;
 
         let crate_data = &response.crate_data;
         let latest_version = response
@@ -183,7 +184,7 @@ impl IntelClient {
 
     /// Fetch GitHub activity for a repository URL.
     /// Returns None if the URL is not a GitHub URL or if the fetch fails.
-    pub fn fetch_github_activity(&self, repo_url: &str) -> Option<GitHubActivity> {
+    pub async fn fetch_github_activity(&self, repo_url: &str) -> Option<GitHubActivity> {
         let (owner, repo) = parse_github_url(repo_url)?;
 
         let url = format!("https://api.github.com/repos/{owner}/{repo}");
@@ -191,10 +192,12 @@ impl IntelClient {
             .http
             .get(url)
             .send()
+            .await
             .ok()?
             .error_for_status()
             .ok()?
             .json::<GitHubRepoResponse>()
+            .await
             .ok()?;
 
         Some(GitHubActivity {
@@ -207,10 +210,10 @@ impl IntelClient {
 
     /// Fetch intel for all unique crate names, returning what we can get.
     /// Failures for individual crates are silently skipped.
-    pub fn fetch_bulk_intel(&self, crate_names: &[&str]) -> HashMap<String, CrateIntel> {
+    pub async fn fetch_bulk_intel(&self, crate_names: &[&str]) -> HashMap<String, CrateIntel> {
         let mut intel = HashMap::new();
         for name in crate_names {
-            match self.fetch_crate_intel(name) {
+            match self.fetch_crate_intel(name).await {
                 Ok(info) => {
                     intel.insert(name.to_string(), info);
                 }
@@ -394,8 +397,8 @@ mod tests {
         assert!(loaded.is_fresh());
     }
 
-    #[test]
-    fn test_fetch_bulk_intel() {
+    #[tokio::test]
+    async fn test_fetch_bulk_intel() {
         let tmp = TempDir::new().unwrap();
 
         let mut client = IntelClient::new().unwrap();
@@ -416,7 +419,9 @@ mod tests {
         fs::write(tmp.path().join("test_success.json"), json).unwrap();
 
         // Fetch one that succeeds and one that fails (cache miss and fake crate)
-        let results = client.fetch_bulk_intel(&["test_success", "test_failure_not_exist_abc123"]);
+        let results = client
+            .fetch_bulk_intel(&["test_success", "invalid/crate"])
+            .await;
 
         // Validate
         assert_eq!(results.len(), 1);
@@ -425,12 +430,13 @@ mod tests {
     }
 
     /// Live network test — run with `cargo test -- --ignored`
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn test_live_fetch_serde() {
+    async fn test_live_fetch_serde() {
         let client = IntelClient::new().expect("client should init");
         let intel = client
             .fetch_crate_intel("serde")
+            .await
             .expect("should fetch serde");
         assert_eq!(intel.name, "serde");
         assert!(intel.downloads > 0);
@@ -441,12 +447,13 @@ mod tests {
     }
 
     /// Live GitHub test — run with `cargo test -- --ignored`
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn test_live_github_serde() {
+    async fn test_live_github_serde() {
         let client = IntelClient::new().expect("client should init");
         let activity = client
             .fetch_github_activity("https://github.com/serde-rs/serde")
+            .await
             .expect("should get activity");
         assert!(activity.stars > 0);
         println!(

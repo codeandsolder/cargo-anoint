@@ -860,34 +860,40 @@ edition = "2021"
     fs::create_dir_all(tmp.path().join("src")).expect("create src");
     fs::write(&src, "fn main() {\n    println!(\"clean\");\n}\n").expect("write main.rs");
 
-    assert!(StdCommand::new("git")
-        .arg("init")
-        .current_dir(tmp.path())
-        .status()
-        .expect("git init")
-        .success());
-    assert!(StdCommand::new("git")
-        .args(["add", "."])
-        .current_dir(tmp.path())
-        .status()
-        .expect("git add")
-        .success());
-    assert!(StdCommand::new("git")
-        .args([
-            "-c",
-            "user.name=Test",
-            "-c",
-            "user.email=test@example.com",
-            "-c",
-            "commit.gpgsign=false",
-            "commit",
-            "-m",
-            "initial",
-        ])
-        .current_dir(tmp.path())
-        .status()
-        .expect("git commit")
-        .success());
+    assert!(
+        StdCommand::new("git")
+            .arg("init")
+            .current_dir(tmp.path())
+            .status()
+            .expect("git init")
+            .success()
+    );
+    assert!(
+        StdCommand::new("git")
+            .args(["add", "."])
+            .current_dir(tmp.path())
+            .status()
+            .expect("git add")
+            .success()
+    );
+    assert!(
+        StdCommand::new("git")
+            .args([
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-m",
+                "initial",
+            ])
+            .current_dir(tmp.path())
+            .status()
+            .expect("git commit")
+            .success()
+    );
 
     fs::write(
         &src,
@@ -1831,9 +1837,11 @@ reqwest = { path = "reqwest", optional = true }
     let findings = report["packages"][0]["dependency_suggestions"]
         .as_array()
         .expect("findings");
-    assert!(findings
-        .iter()
-        .any(|f| f["kind"] == "CapabilityOverlap" && f["current"] == "wreq+reqwest"));
+    assert!(
+        findings
+            .iter()
+            .any(|f| f["kind"] == "CapabilityOverlap" && f["current"] == "wreq+reqwest")
+    );
     fs::write(
         root.join("anoint.toml"),
         r#"

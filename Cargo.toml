@@ -2,8 +2,8 @@
 name = "cargo-anoint"
 publish = false
 version = "0.4.1"
-edition = "2021"
-rust-version = "1.85"
+edition = "2024"
+rust-version = "1.98"
 default-run = "cargo-anoint"
 description = "Modernize your Rust dependencies with blessed.rs + live intel"
 license = "MIT"
@@ -40,7 +40,8 @@ cargo_metadata = "0.19"
 toml_edit = { version = "0.22", features = ["serde"] }
 
 # HTTP client
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+wreq = { git = "https://github.com/codeandsolder/wreq-exp", rev = "aad8f97d78e40c4c9fc0ddbb0cf88af870f848ac", default-features = false, features = ["webpki-roots", "tokio-rt", "http2", "json"] }
+tokio = { version = "1.54.1", features = ["rt", "macros", "time", "sync"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }

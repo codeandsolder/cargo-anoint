@@ -1,7 +1,7 @@
 //! Parser layer — extracts the full dependency tree from Cargo.toml / Cargo.lock
 //! using `cargo_metadata` for feature-aware resolution.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use cargo_metadata::{
     CargoOpt, DependencyKind, MetadataCommand, Node, Package, PackageId, Resolve,
 };

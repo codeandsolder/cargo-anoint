@@ -9,12 +9,14 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
-fn main() -> Result<()> {
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<()> {
     println!("Fetching blessed.rs rules...");
 
     // Fetch live rules via the updater module
-    let blessed_rules =
-        cargo_anoint::updater::update_rules().context("failed to fetch blessed.rs rules")?;
+    let blessed_rules = cargo_anoint::updater::update_rules()
+        .await
+        .context("failed to fetch blessed.rs rules")?;
 
     // Load existing hand-crafted rules from data/suggestions.json
     let data_path = Path::new("data/suggestions.json");

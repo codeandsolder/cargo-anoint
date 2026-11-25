@@ -2,19 +2,20 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::Parser;
 use colored::*;
 
 mod cli;
 
-fn main() -> Result<()> {
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<()> {
     let args = cli::Cli::parse();
 
     match args.command {
         cli::Commands::Anoint(command) => match command.command {
             Some(cli::AnointSubcommand::Bs(opts)) => run_code_audit_command(opts),
-            None => run_anoint_command(command.opts),
+            None => run_anoint_command(command.opts).await,
         },
         cli::Commands::Bs(opts) => run_code_audit_command(opts),
     }
@@ -109,13 +110,15 @@ fn maybe_fail_on_exit(
     }
     if let Some(set) = levels {
         if dependency_fail_triggered(suggestions, set) {
-            bail!("exiting with non-zero status: at least one dependency suggestion matched --fail-on");
+            bail!(
+                "exiting with non-zero status: at least one dependency suggestion matched --fail-on"
+            );
         }
     }
     Ok(())
 }
 
-fn run_anoint_command(opts: cli::AnointOpts) -> Result<()> {
+async fn run_anoint_command(opts: cli::AnointOpts) -> Result<()> {
     if opts.init_ci {
         return run_init_ci(opts.manifest_path.as_deref());
     }
@@ -213,7 +216,7 @@ fn run_anoint_command(opts: cli::AnointOpts) -> Result<()> {
             && !opts.no_advisories
         {
             let dependencies = unique_direct_dependency_versions(&snapshots);
-            cargo_anoint::advisories::fetch_advisories_batch_for_versions(&dependencies)
+            cargo_anoint::advisories::fetch_advisories_batch_for_versions(&dependencies).await
         } else {
             Vec::new()
         };
@@ -238,9 +241,11 @@ fn run_anoint_command(opts: cli::AnointOpts) -> Result<()> {
     println!();
 
     if opts.update_rules {
-        cargo_anoint::updater::update_rules()?;
+        cargo_anoint::updater::update_rules().await?;
         println!();
-        println!("Candidate rules fetched; review changes using the update-suggestions binary before committing.");
+        println!(
+            "Candidate rules fetched; review changes using the update-suggestions binary before committing."
+        );
         return Ok(());
     }
 
@@ -348,7 +353,7 @@ fn run_anoint_command(opts: cli::AnointOpts) -> Result<()> {
         match cargo_anoint::intel::IntelClient::new() {
             Ok(client) => {
                 println!("{}", "🌐 Fetching live intelligence...".dimmed());
-                let result = client.fetch_bulk_intel(&crate_names);
+                let result = client.fetch_bulk_intel(&crate_names).await;
                 if result.is_empty() && !crate_names.is_empty() {
                     println!(
                         "{}",
@@ -393,7 +398,8 @@ fn run_anoint_command(opts: cli::AnointOpts) -> Result<()> {
         let direct_dependencies = unique_direct_dependency_versions(&snapshots);
         if !direct_dependencies.is_empty() {
             let hits =
-                cargo_anoint::advisories::fetch_advisories_batch_for_versions(&direct_dependencies);
+                cargo_anoint::advisories::fetch_advisories_batch_for_versions(&direct_dependencies)
+                    .await;
             cargo_anoint::output::render_advisories(&hits);
         }
     }
@@ -641,7 +647,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@nightly-2026-11-19
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -691,7 +697,9 @@ fn run_init_ci(manifest_path: Option<&Path>) -> Result<()> {
     println!("     • Gates merges on curated potential capability overlaps");
     println!("     • Uploads code-audit findings as SARIF (GitHub code scanning / PR annotations)");
     println!();
-    println!("   Tip: add fail_on = [\"high\"] to anoint.toml to enforce the gate without repeating the flag.");
+    println!(
+        "   Tip: add fail_on = [\"high\"] to anoint.toml to enforce the gate without repeating the flag."
+    );
 
     Ok(())
 }
@@ -912,7 +920,9 @@ fn reject_invalid_flag_combinations(opts: &cli::AnointOpts) -> Result<()> {
             bail!("--feedback always includes the code audit; do not combine with --audit-code");
         }
         if opts.workspace || !opts.package.is_empty() {
-            bail!("--feedback analyzes the workspace root crate only — omit `--workspace` and `--package`");
+            bail!(
+                "--feedback analyzes the workspace root crate only — omit `--workspace` and `--package`"
+            );
         }
     }
     if opts.summary {
@@ -929,7 +939,9 @@ fn reject_invalid_flag_combinations(opts: &cli::AnointOpts) -> Result<()> {
             bail!("--summary cannot be combined with --audit-code");
         }
         if opts.dry_run {
-            bail!("--summary cannot be combined with --dry-run (use `--fix --dry-run` on a normal run)");
+            bail!(
+                "--summary cannot be combined with --dry-run (use `--fix --dry-run` on a normal run)"
+            );
         }
     }
     if opts.dry_run && !opts.fix {

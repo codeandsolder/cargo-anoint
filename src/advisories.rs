@@ -89,7 +89,7 @@ struct OsvVuln {
 /// release.
 /// Returns only crates that have at least one advisory.
 /// All network or parse errors are swallowed — returns `[]` on failure.
-pub fn fetch_advisories_batch(crate_names: &[&str]) -> Vec<CrateAdvisories> {
+pub async fn fetch_advisories_batch(crate_names: &[&str]) -> Vec<CrateAdvisories> {
     let queries = crate_names
         .iter()
         .map(|name| OsvPackageQuery {
@@ -101,17 +101,17 @@ pub fn fetch_advisories_batch(crate_names: &[&str]) -> Vec<CrateAdvisories> {
         })
         .collect();
 
-    fetch_advisories(queries)
+    fetch_advisories(queries).await
 }
 
 /// Fetch advisories that affect the exact resolved crate versions.
 ///
 /// Each tuple is `(crate_name, resolved_version)`. OSV uses the version to
 /// filter out historical advisories that do not affect the installed release.
-pub fn fetch_advisories_batch_for_versions(
+pub async fn fetch_advisories_batch_for_versions(
     crate_versions: &[(&str, &str)],
 ) -> Vec<CrateAdvisories> {
-    fetch_advisories(versioned_queries(crate_versions))
+    fetch_advisories(versioned_queries(crate_versions)).await
 }
 
 fn versioned_queries(crate_versions: &[(&str, &str)]) -> Vec<OsvPackageQuery> {
@@ -127,12 +127,12 @@ fn versioned_queries(crate_versions: &[(&str, &str)]) -> Vec<OsvPackageQuery> {
         .collect()
 }
 
-fn fetch_advisories(queries: Vec<OsvPackageQuery>) -> Vec<CrateAdvisories> {
+async fn fetch_advisories(queries: Vec<OsvPackageQuery>) -> Vec<CrateAdvisories> {
     if queries.is_empty() {
         return Vec::new();
     }
 
-    let client = match reqwest::blocking::Client::builder()
+    let client = match wreq::Client::builder()
         .user_agent(USER_AGENT)
         .timeout(Duration::from_secs(10))
         .build()
@@ -143,13 +143,17 @@ fn fetch_advisories(queries: Vec<OsvPackageQuery>) -> Vec<CrateAdvisories> {
 
     let request = OsvBatchRequest { queries };
 
-    let batch: OsvBatchResponse = match client
+    let response = match client
         .post(OSV_BATCH_URL)
         .json(&request)
         .send()
+        .await
         .and_then(|r| r.error_for_status())
-        .and_then(|r| r.json())
     {
+        Ok(response) => response,
+        Err(_) => return Vec::new(),
+    };
+    let batch: OsvBatchResponse = match response.json().await {
         Ok(b) => b,
         Err(_) => return Vec::new(),
     };

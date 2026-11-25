@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tree_sitter::{Node, Parser};
@@ -895,9 +895,11 @@ fn main() {
     fn detects_shared_mutable_state() {
         let code = "type Store = Arc<RwLock<HashMap<String, String>>>;";
         let alerts = scan_code(code, "src/lib.rs", &config()).unwrap();
-        assert!(alerts
-            .iter()
-            .any(|a| a.kind == BullshitKind::OverEngineering));
+        assert!(
+            alerts
+                .iter()
+                .any(|a| a.kind == BullshitKind::OverEngineering)
+        );
     }
 
     #[test]
@@ -909,9 +911,11 @@ fn tangled(x: usize) -> usize {
 }
 "#;
         let alerts = scan_code(code, "src/lib.rs", &config()).unwrap();
-        assert!(alerts
-            .iter()
-            .any(|a| a.kind == BullshitKind::FakeComplexity));
+        assert!(
+            alerts
+                .iter()
+                .any(|a| a.kind == BullshitKind::FakeComplexity)
+        );
     }
 
     #[test]

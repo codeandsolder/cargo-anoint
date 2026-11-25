@@ -44,11 +44,7 @@ fn ripgrep_dir() -> Option<PathBuf> {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()?
         .join("test-target-ripgrep");
-    if dir.exists() {
-        Some(dir)
-    } else {
-        None
-    }
+    if dir.exists() { Some(dir) } else { None }
 }
 
 fn cargo_supports_edition_2024() -> bool {

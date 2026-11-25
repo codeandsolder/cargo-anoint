@@ -7,7 +7,7 @@ use std::path::Path;
 use colored::*;
 use serde::Serialize;
 
-use crate::code_audit::{kind_label, CodeAuditReport};
+use crate::code_audit::{CodeAuditReport, kind_label};
 use crate::intel::CrateIntel;
 use crate::suggestions::{AutofixSafety, Confidence, Impact, MigrationRisk, SuggestionKind};
 use crate::suggestions::{EvidenceSource, Suggestion};

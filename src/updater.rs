@@ -77,10 +77,10 @@ impl CachedRules {
 // ── Public API ───────────────────────────────────────────────────────
 
 /// Force-fetch the latest blessed.rs data and update the cached rules.
-pub fn update_rules() -> Result<Vec<Rule>> {
+pub async fn update_rules() -> Result<Vec<Rule>> {
     println!("📡 Fetching latest blessed.rs recommendations...");
 
-    let client = reqwest::blocking::Client::builder()
+    let client = wreq::Client::builder()
         .timeout(Duration::from_secs(15))
         .user_agent(concat!("cargo-anoint/", env!("CARGO_PKG_VERSION")))
         .build()
@@ -89,9 +89,14 @@ pub fn update_rules() -> Result<Vec<Rule>> {
     let response = client
         .get(BLESSED_URL)
         .send()
+        .await
         .context("failed to fetch blessed.rs data")?;
 
-    let data: BlessedData = response.json().context("failed to parse blessed.rs JSON")?;
+    let data: BlessedData = response
+        .error_for_status()?
+        .json()
+        .await
+        .context("failed to parse blessed.rs JSON")?;
 
     let rules = convert_to_rules(&data);
     println!("✅ Generated {} rules from blessed.rs", rules.len());
@@ -481,10 +486,10 @@ mod tests {
     }
 
     /// Live network test — run with `cargo test -- --ignored`
-    #[test]
+    #[tokio::test]
     #[ignore]
-    fn test_live_update() {
-        let rules = update_rules().expect("should fetch and convert");
+    async fn test_live_update() {
+        let rules = update_rules().await.expect("should fetch and convert");
         assert!(
             rules.len() >= 3,
             "expected a small set of high-confidence blessed migration rows, got {}",

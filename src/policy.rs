@@ -140,7 +140,10 @@ pub fn try_load_policy(path: &Path) -> anyhow::Result<Policy> {
                 .len()
                 != entry.providers.len()
         {
-            anyhow::bail!("invalid allow_overlap in {}: provide package, exactly two distinct providers, and a reason", path.display());
+            anyhow::bail!(
+                "invalid allow_overlap in {}: provide package, exactly two distinct providers, and a reason",
+                path.display()
+            );
         }
     }
     Ok(policy)

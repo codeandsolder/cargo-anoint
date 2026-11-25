@@ -5,39 +5,30 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
-env:
-  CARGO_TERM_COLOR: always
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
-    name: ${{ matrix.toolchain }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        toolchain: [stable, "1.85"]
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ matrix.toolchain }}
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo check --locked
-      - run: cargo clippy --locked -- -D warnings
-        if: matrix.toolchain == 'stable'
-      - run: cargo test --locked
-      - name: Install smoke test
-        if: matrix.toolchain == 'stable'
-        run: |
-          cargo install --path . --debug --locked
-          cargo anoint --help
-          cargo anoint --offline --no-audit-code
-          cargo anoint --feedback >/tmp/feedback-smoke.txt
-          wc -l /tmp/feedback-smoke.txt
-      - name: Run security audit
-        if: matrix.toolchain == 'stable'
-        run: |
-          cargo install cargo-audit --locked
-          cargo audit
+    uses: codeandsolder/ci-workflows/.github/workflows/rust-sccache.yml@f79aef2a560a2c1c0f06f3c657f690f778040156
+    with:
+      rust-components: clippy rustfmt
+      test-impact-mode: none
+      command: |
+        cargo fmt --all -- --check
+        cargo clippy --locked --all-targets -- -D warnings
+        cargo test --locked
+        cargo install --path . --debug --locked
+        cargo anoint --help
+        cargo anoint --workspace --offline --fail-on-overlap
+        cargo anoint --feedback
+        cargo install cargo-audit --version 0.23.0 --locked
+        cargo audit
+  quarantine:
+    uses: codeandsolder/ci-workflows/.github/workflows/cargo-release-quarantine.yml@f79aef2a560a2c1c0f06f3c657f690f778040156

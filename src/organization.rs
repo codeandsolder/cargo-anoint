@@ -276,14 +276,16 @@ mod tests {
         assert_eq!(combos[0].current, "wreq+reqwest");
         assert_eq!(combos[0].package.as_deref(), Some("app"));
         assert!(!combos[0].is_auto_fixable());
-        assert!(analyze(
-            &[
-                dep("btls", None, true),
-                dep("btls-sys", None, true),
-                dep("tokio-btls", None, true)
-            ],
-            None
-        )
-        .is_empty());
+        assert!(
+            analyze(
+                &[
+                    dep("btls", None, true),
+                    dep("btls-sys", None, true),
+                    dep("tokio-btls", None, true)
+                ],
+                None
+            )
+            .is_empty()
+        );
     }
 }
