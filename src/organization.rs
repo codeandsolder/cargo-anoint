@@ -316,6 +316,7 @@ mod tests {
             "aws-lc-rs",
             "aws-lc-sys",
             "ring",
+            "rsa",
             "miniz_oxide",
             "libmount",
             "version-compare",

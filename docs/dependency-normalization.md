@@ -25,3 +25,18 @@ compression implementation. Do not generate a global replacement rule for these
 names merely because a former parent dependency used them. They may remain
 legitimate in unrelated projects. Disabling the owning feature or migrating
 the owning implementation is the correct way to remove them.
+
+
+## Reqsign signing consolidation
+
+The native Reqsign patch family replaces RustCrypto RSA signing with btls-fast
+in core, Azure Storage and Google. Prefer the same-source patched family for
+compatible native consumers; do not mix their key types. The `rsa` preference
+also detects transitive use.
+
+Additional incidental fleet graph removals: aes, base64ct, block-padding, cbc,
+cipher, der, inout, lazy_static, libm, num-bigint-dig, num-integer, num-iter,
+pbkdf2, pem-rfc7468, pkcs1, pkcs5, pkcs8, salsa20, scrypt, spki and subtle.
+These remain legitimate in other cryptographic and numerical workloads; the
+RSA migration removes the now-unused key parsing and arithmetic chain, not
+all uses of these primitives globally.

@@ -136,7 +136,10 @@
       "packages": [
         "http2",
         "netty",
-        "wreq-util"
+        "wreq-util",
+        "reqsign-core",
+        "reqsign-azure-storage",
+        "reqsign-google"
       ]
     }
   ],
@@ -449,6 +452,14 @@
       ],
       "preferred": "Wreq webpki-roots/native-roots or an explicit btls certificate store",
       "notes": "Keep trust root representations aligned with the selected TLS stack; webpki-roots and webpki-root-certs are different representations, not drop-in replacements.",
+      "include_transitive": true
+    },
+    {
+      "packages": [
+        "rsa"
+      ],
+      "preferred": "btls-fast RSA APIs for native consumers, including the shared Reqsign signing patch family",
+      "notes": "Avoid a separate arbitrary-precision RSA signing backend when the application already uses BoringSSL. Reqsign core, Azure and Google must migrate as one family. For standalone, pure-Rust or WASM requirements evaluate the appropriate implementation rather than automatically replacing it.",
       "include_transitive": true
     }
   ],
