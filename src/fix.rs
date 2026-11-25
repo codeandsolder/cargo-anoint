@@ -278,9 +278,8 @@ fn apply_feature_opt(doc: &mut DocumentMut, pattern: &str, recommended: &str) ->
         }
     }
 
-    if extra_removed_section.is_none() {
-        anyhow::bail!("`{}` not found in any dependency section", extra_crate);
-    }
+    let extra_removed_section = extra_removed_section
+        .ok_or_else(|| anyhow::anyhow!("`{extra_crate}` not found in any dependency section"))?;
 
     // Find the main crate in any section and add the feature
     for section in &sections {
@@ -289,11 +288,7 @@ fn apply_feature_opt(doc: &mut DocumentMut, pattern: &str, recommended: &str) ->
                 add_feature_to_dep(deps, main_crate, &feature_name)?;
                 return Ok(format!(
                     "Removed `{}` from [{}], enabled `{}` feature on `{}` in [{}]",
-                    extra_crate,
-                    extra_removed_section.unwrap(),
-                    feature_name,
-                    main_crate,
-                    section
+                    extra_crate, extra_removed_section, feature_name, main_crate, section
                 ));
             }
         }

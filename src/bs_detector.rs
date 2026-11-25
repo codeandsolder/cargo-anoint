@@ -56,15 +56,48 @@ impl std::fmt::Display for BSCategory {
     }
 }
 
-/// Scan a directory tree for hardcoded bullshit values.
-pub fn scan_dir(root: &Path) -> Vec<BSHit> {
-    let mut hits = Vec::new();
-    scan_path(root, &mut hits);
-    hits.sort_by(|a, b| a.file.cmp(&b.file).then(a.line.cmp(&b.line)));
-    hits
+struct Patterns {
+    ip_check: regex::Regex,
+    numbers: regex::Regex,
+    urls: regex::Regex,
+    keys: regex::Regex,
+    paths: regex::Regex,
+    ips: regex::Regex,
+    credentials: regex::Regex,
+    timeouts: regex::Regex,
 }
 
-fn scan_path(dir: &Path, hits: &mut Vec<BSHit>) {
+impl Patterns {
+    fn new() -> Result<Self, regex::Error> {
+        Ok(Self {
+            ip_check: regex::Regex::new(r#"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b"#)?,
+            numbers: regex::Regex::new(r#"\b(\d{3,}|\d+\.\d+)\b"#)?,
+            urls: regex::Regex::new(r#"(https?://[^\s"'`<>\)\]]+)"#)?,
+            keys: regex::Regex::new(
+                r#"(?i)(api[_-]?key|token|secret|password|passwd|auth[_-]?token)\s*=\s*["']([^"']+)["']"#,
+            )?,
+            paths: regex::Regex::new(r#"["'](/[a-zA-Z0-9_/.-]+)["']"#)?,
+            ips: regex::Regex::new(r#"\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b"#)?,
+            credentials: regex::Regex::new(
+                r#"(?i)(password|passwd|pwd)\s*[:=]\s*["']([^"']{3,})["']"#,
+            )?,
+            timeouts: regex::Regex::new(
+                r#"(?i)(timeout|duration|interval|delay)\s*[:=]\s*(\d+)\s*(ms|seconds?|minutes?|hours?)?"#,
+            )?,
+        })
+    }
+}
+
+/// Scan a directory tree for hardcoded bullshit values.
+pub fn scan_dir(root: &Path) -> Result<Vec<BSHit>, regex::Error> {
+    let patterns = Patterns::new()?;
+    let mut hits = Vec::new();
+    scan_path(root, &mut hits, &patterns);
+    hits.sort_by(|a, b| a.file.cmp(&b.file).then(a.line.cmp(&b.line)));
+    Ok(hits)
+}
+
+fn scan_path(dir: &Path, hits: &mut Vec<BSHit>, patterns: &Patterns) {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
@@ -80,11 +113,11 @@ fn scan_path(dir: &Path, hits: &mut Vec<BSHit>) {
                     continue;
                 }
             }
-            scan_path(&path, hits);
+            scan_path(&path, hits, patterns);
         } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
             if let Ok(content) = fs::read_to_string(&path) {
                 for (i, line) in content.lines().enumerate() {
-                    check_line(&path, i + 1, line, hits);
+                    check_line(&path, i + 1, line, hits, patterns);
                 }
             }
         }
@@ -92,7 +125,13 @@ fn scan_path(dir: &Path, hits: &mut Vec<BSHit>) {
 }
 
 /// Check a single line for hardcoded bullshit.
-fn check_line(path: &Path, line_num: usize, line: &str, hits: &mut Vec<BSHit>) {
+fn check_line(
+    path: &Path,
+    line_num: usize,
+    line: &str,
+    hits: &mut Vec<BSHit>,
+    patterns: &Patterns,
+) {
     let trimmed = line.trim();
 
     // Skip comments (but still check doc comments for URLs)
@@ -100,30 +139,33 @@ fn check_line(path: &Path, line_num: usize, line: &str, hits: &mut Vec<BSHit>) {
         return;
     }
 
-    detect_magic_numbers(path, line_num, trimmed, hits);
-    detect_hardcoded_urls(path, line_num, trimmed, hits);
-    detect_api_keys(path, line_num, trimmed, hits);
-    detect_file_paths(path, line_num, trimmed, hits);
-    detect_ip_addresses(path, line_num, trimmed, hits);
-    detect_credentials(path, line_num, trimmed, hits);
-    detect_hardcoded_timeouts(path, line_num, trimmed, hits);
+    detect_magic_numbers(path, line_num, trimmed, hits, patterns);
+    detect_hardcoded_urls(path, line_num, trimmed, hits, patterns);
+    detect_api_keys(path, line_num, trimmed, hits, patterns);
+    detect_file_paths(path, line_num, trimmed, hits, patterns);
+    detect_ip_addresses(path, line_num, trimmed, hits, patterns);
+    detect_credentials(path, line_num, trimmed, hits, patterns);
+    detect_hardcoded_timeouts(path, line_num, trimmed, hits, patterns);
 }
 
 /// Detect magic numbers — numeric literals that aren't 0, 1, -1, 2, or common constants.
-fn detect_magic_numbers(path: &Path, line_num: usize, line: &str, hits: &mut Vec<BSHit>) {
+fn detect_magic_numbers(
+    path: &Path,
+    line_num: usize,
+    line: &str,
+    hits: &mut Vec<BSHit>,
+    patterns: &Patterns,
+) {
     // Skip lines that are clearly defining a constant
     if line.contains("const ") || line.contains("static ") {
         return;
     }
-    if regex::Regex::new(r#"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b"#)
-        .unwrap()
-        .is_match(line)
-    {
+    if patterns.ip_check.is_match(line) {
         return;
     }
 
     // Match numeric literals (integers and floats)
-    let re = regex::Regex::new(r#"\b(\d{3,}|\d+\.\d+)\b"#).unwrap();
+    let re = &patterns.numbers;
     for cap in re.captures_iter(line) {
         let value = &cap[1];
 
@@ -152,8 +194,14 @@ fn detect_magic_numbers(path: &Path, line_num: usize, line: &str, hits: &mut Vec
 }
 
 /// Detect hardcoded URLs.
-fn detect_hardcoded_urls(path: &Path, line_num: usize, line: &str, hits: &mut Vec<BSHit>) {
-    let re = regex::Regex::new(r#"(https?://[^\s"'`<>\)\]]+)"#).unwrap();
+fn detect_hardcoded_urls(
+    path: &Path,
+    line_num: usize,
+    line: &str,
+    hits: &mut Vec<BSHit>,
+    patterns: &Patterns,
+) {
+    let re = &patterns.urls;
     for cap in re.captures_iter(line) {
         let url = &cap[1];
 
@@ -181,11 +229,14 @@ fn detect_hardcoded_urls(path: &Path, line_num: usize, line: &str, hits: &mut Ve
 }
 
 /// Detect API keys, tokens, and secrets.
-fn detect_api_keys(path: &Path, line_num: usize, line: &str, hits: &mut Vec<BSHit>) {
-    let re = regex::Regex::new(
-        r#"(?i)(api[_-]?key|token|secret|password|passwd|auth[_-]?token)\s*=\s*["']([^"']+)["']"#,
-    )
-    .unwrap();
+fn detect_api_keys(
+    path: &Path,
+    line_num: usize,
+    line: &str,
+    hits: &mut Vec<BSHit>,
+    patterns: &Patterns,
+) {
+    let re = &patterns.keys;
 
     for cap in re.captures_iter(line) {
         let value = &cap[2];
@@ -213,8 +264,14 @@ fn detect_api_keys(path: &Path, line_num: usize, line: &str, hits: &mut Vec<BSHi
 }
 
 /// Detect hardcoded file paths.
-fn detect_file_paths(path: &Path, line_num: usize, line: &str, hits: &mut Vec<BSHit>) {
-    let re = regex::Regex::new(r#"["'](/[a-zA-Z0-9_/.-]+)["']"#).unwrap();
+fn detect_file_paths(
+    path: &Path,
+    line_num: usize,
+    line: &str,
+    hits: &mut Vec<BSHit>,
+    patterns: &Patterns,
+) {
+    let re = &patterns.paths;
     for cap in re.captures_iter(line) {
         let p = &cap[1];
 
@@ -238,8 +295,14 @@ fn detect_file_paths(path: &Path, line_num: usize, line: &str, hits: &mut Vec<BS
 }
 
 /// Detect hardcoded IP addresses.
-fn detect_ip_addresses(path: &Path, line_num: usize, line: &str, hits: &mut Vec<BSHit>) {
-    let re = regex::Regex::new(r#"\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b"#).unwrap();
+fn detect_ip_addresses(
+    path: &Path,
+    line_num: usize,
+    line: &str,
+    hits: &mut Vec<BSHit>,
+    patterns: &Patterns,
+) {
+    let re = &patterns.ips;
     for cap in re.captures_iter(line) {
         let ip = &cap[1];
 
@@ -261,9 +324,14 @@ fn detect_ip_addresses(path: &Path, line_num: usize, line: &str, hits: &mut Vec<
 }
 
 /// Detect hardcoded credentials (passwords in strings).
-fn detect_credentials(path: &Path, line_num: usize, line: &str, hits: &mut Vec<BSHit>) {
-    let re =
-        regex::Regex::new(r#"(?i)(password|passwd|pwd)\s*[:=]\s*["']([^"']{3,})["']"#).unwrap();
+fn detect_credentials(
+    path: &Path,
+    line_num: usize,
+    line: &str,
+    hits: &mut Vec<BSHit>,
+    patterns: &Patterns,
+) {
+    let re = patterns.credentials;
 
     for cap in re.captures_iter(line) {
         let value = &cap[2];
@@ -287,11 +355,14 @@ fn detect_credentials(path: &Path, line_num: usize, line: &str, hits: &mut Vec<B
 }
 
 /// Detect hardcoded timeouts/durations that should be configurable.
-fn detect_hardcoded_timeouts(path: &Path, line_num: usize, line: &str, hits: &mut Vec<BSHit>) {
-    let re = regex::Regex::new(
-        r#"(?i)(timeout|duration|interval|delay)\s*[:=]\s*(\d+)\s*(ms|seconds?|minutes?|hours?)?"#,
-    )
-    .unwrap();
+fn detect_hardcoded_timeouts(
+    path: &Path,
+    line_num: usize,
+    line: &str,
+    hits: &mut Vec<BSHit>,
+    patterns: &Patterns,
+) {
+    let re = &patterns.timeouts;
 
     for cap in re.captures_iter(line) {
         let value = &cap[2];
@@ -374,6 +445,10 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
     use tempfile::TempDir;
+
+    fn check_line(path: &Path, line_num: usize, line: &str, hits: &mut Vec<BSHit>) {
+        super::check_line(path, line_num, line, hits, &Patterns::new().unwrap());
+    }
 
     fn create_test_file(dir: &Path, name: &str, content: &str) -> PathBuf {
         let path = dir.join(name);
@@ -527,7 +602,7 @@ mod tests {
         create_test_file(tmp.path(), "magic.rs", "let x = 4096;\nlet y = 8192;");
         create_test_file(tmp.path(), "keys.rs", r#"let api_key = "sk-real-key";"#);
 
-        let hits = scan_dir(tmp.path());
+        let hits = scan_dir(tmp.path()).unwrap();
         assert!(
             hits.len() >= 3,
             "should find at least 3 hits, got {}",
@@ -546,7 +621,7 @@ mod tests {
         fs::create_dir_all(&target_dir).unwrap();
         create_test_file(&target_dir, "magic.rs", "let x = 99999;");
 
-        let hits = scan_dir(tmp.path());
+        let hits = scan_dir(tmp.path()).unwrap();
         assert!(hits.is_empty(), "target/ should be skipped");
     }
 }

@@ -164,7 +164,7 @@ async fn run_anoint_command(opts: cli::AnointOpts) -> Result<()> {
         effective_all_targets,
         &resolution_options(&opts),
     )?;
-    let rules = cargo_anoint::suggestions::load_rules();
+    let rules = cargo_anoint::suggestions::load_rules()?;
 
     let mut per_pkg_suggestions: Vec<Vec<cargo_anoint::suggestions::Suggestion>> = Vec::new();
     for snap in &snapshots {
@@ -175,9 +175,9 @@ async fn run_anoint_command(opts: cli::AnointOpts) -> Result<()> {
                 &snap.deps,
                 &rules,
                 Some(snap.name.as_str()),
-            )
+            )?
         } else {
-            cargo_anoint::suggestions::analyze(Some(mpath), &snap.deps, &rules)
+            cargo_anoint::suggestions::analyze(Some(mpath), &snap.deps, &rules)?
         };
         per_pkg_suggestions.push(apply_policy(raw, policy.as_ref()));
     }
@@ -471,7 +471,7 @@ fn run_summary_mode(
         effective_all_targets,
         &resolution_options(opts),
     )?;
-    let rules = cargo_anoint::suggestions::load_rules();
+    let rules = cargo_anoint::suggestions::load_rules()?;
 
     let mut all = Vec::new();
     for snap in &snapshots {
@@ -482,9 +482,9 @@ fn run_summary_mode(
                 &snap.deps,
                 &rules,
                 Some(snap.name.as_str()),
-            )
+            )?
         } else {
-            cargo_anoint::suggestions::analyze(Some(mpath), &snap.deps, &rules)
+            cargo_anoint::suggestions::analyze(Some(mpath), &snap.deps, &rules)?
         };
         all.extend(apply_policy(raw, policy));
     }
@@ -521,9 +521,9 @@ fn run_feedback_command(opts: cli::AnointOpts) -> Result<()> {
     let deps = cargo_anoint::parser::get_deps(manifest)?;
     let direct_count = deps.iter().filter(|d| d.is_direct).count();
 
-    let rules = cargo_anoint::suggestions::load_rules();
+    let rules = cargo_anoint::suggestions::load_rules()?;
     let suggestions = apply_policy(
-        cargo_anoint::suggestions::analyze(manifest, &deps, &rules),
+        cargo_anoint::suggestions::analyze(manifest, &deps, &rules)?,
         policy.as_ref(),
     );
 
@@ -557,7 +557,7 @@ fn run_code_audit_command(opts: cli::CodeAuditOpts) -> Result<()> {
             .and_then(Path::parent)
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
-        cargo_anoint::bs_detector::scan_dir(root)
+        cargo_anoint::bs_detector::scan_dir(root)?
     } else {
         Vec::new()
     };
@@ -753,7 +753,7 @@ fn run_init_hooks(manifest_path: Option<&Path>) -> Result<()> {
 fn run_explain(pattern: &str) -> Result<()> {
     use colored::Colorize;
 
-    let rules = cargo_anoint::suggestions::load_rules();
+    let rules = cargo_anoint::suggestions::load_rules()?;
     let pattern_lower = pattern.to_lowercase();
     let matches: Vec<_> = rules
         .iter()

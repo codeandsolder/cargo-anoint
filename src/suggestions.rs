@@ -141,9 +141,8 @@ fn default_evidence_source() -> EvidenceSource {
 }
 
 /// Load the reviewed, version-controlled rule database. Live cache entries must not change CI results.
-pub fn load_rules() -> Vec<Rule> {
+pub fn load_rules() -> serde_json::Result<Vec<Rule>> {
     serde_json::from_str(include_str!("../data/suggestions.json"))
-        .expect("embedded suggestions.json should be valid")
 }
 
 use std::fs;
@@ -159,7 +158,7 @@ pub fn analyze(
     manifest_path: Option<&Path>,
     deps: &[ResolvedDep],
     rules: &[Rule],
-) -> Vec<Suggestion> {
+) -> serde_json::Result<Vec<Suggestion>> {
     analyze_for_package(manifest_path, deps, rules, None)
 }
 
@@ -169,7 +168,7 @@ pub fn analyze_for_package(
     deps: &[ResolvedDep],
     rules: &[Rule],
     package_label: Option<&str>,
-) -> Vec<Suggestion> {
+) -> serde_json::Result<Vec<Suggestion>> {
     let direct_names: HashSet<&str> = deps
         .iter()
         .filter(|d| d.is_direct)
@@ -225,8 +224,8 @@ pub fn analyze_for_package(
         }
     }
 
-    suggestions.extend(crate::organization::analyze(deps, package_label));
-    suggestions
+    suggestions.extend(crate::organization::analyze(deps, package_label)?);
+    Ok(suggestions)
 }
 
 /// Recursively scans `.rs` files in the project to determine if the crate is imported or used.
@@ -295,7 +294,7 @@ mod tests {
 
     #[test]
     fn test_load_rules() {
-        let rules = load_rules();
+        let rules = load_rules().unwrap();
         assert!(
             rules.len() >= 15,
             "should load at least 15 rules, got {}",
@@ -310,7 +309,7 @@ mod tests {
 
     #[test]
     fn test_analyze_single_crate_match() {
-        let rules = load_rules();
+        let rules = load_rules().unwrap();
         let deps = vec![
             ResolvedDep {
                 name: "lazy_static".into(),
@@ -334,7 +333,7 @@ mod tests {
             },
         ];
 
-        let suggestions = analyze(None, &deps, &rules);
+        let suggestions = analyze(None, &deps, &rules).unwrap();
         assert_eq!(suggestions.len(), 1);
         assert_eq!(suggestions[0].current, "lazy_static");
         assert_eq!(suggestions[0].recommended, "std::sync::LazyLock");
@@ -382,6 +381,7 @@ mod tests {
         };
 
         let suggestions: Vec<_> = analyze(None, &deps, &[custom_rule])
+            .unwrap()
             .into_iter()
             .filter(|s| s.current == "reqwest+some_unused_crate")
             .collect();
@@ -396,7 +396,7 @@ mod tests {
 
     #[test]
     fn test_analyze_combo_partial_no_match() {
-        let rules = load_rules();
+        let rules = load_rules().unwrap();
         // Only reqwest present, no serde_json — combo should NOT fire
         let deps = vec![ResolvedDep {
             name: "reqwest".into(),
@@ -409,7 +409,7 @@ mod tests {
             direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
         }];
 
-        let suggestions = analyze(None, &deps, &rules);
+        let suggestions = analyze(None, &deps, &rules).unwrap();
         assert!(
             !suggestions
                 .iter()
@@ -420,7 +420,7 @@ mod tests {
 
     #[test]
     fn test_analyze_ignores_transitive() {
-        let rules = load_rules();
+        let rules = load_rules().unwrap();
         let deps = vec![ResolvedDep {
             name: "lazy_static".into(),
             version: "1.5.0".into(),
@@ -432,7 +432,7 @@ mod tests {
             direct_kinds: vec![], // transitive — should be ignored
         }];
 
-        let suggestions = analyze(None, &deps, &rules);
+        let suggestions = analyze(None, &deps, &rules).unwrap();
         assert!(
             suggestions.is_empty(),
             "transitive deps should not trigger suggestions"
@@ -441,7 +441,7 @@ mod tests {
 
     #[test]
     fn test_analyze_multiple_matches() {
-        let rules = load_rules();
+        let rules = load_rules().unwrap();
         let deps = vec![
             ResolvedDep {
                 name: "lazy_static".into(),
@@ -475,7 +475,7 @@ mod tests {
             },
         ];
 
-        let suggestions = analyze(None, &deps, &rules);
+        let suggestions = analyze(None, &deps, &rules).unwrap();
         assert_eq!(suggestions.len(), 3);
 
         let names: Vec<&str> = suggestions.iter().map(|s| s.current.as_str()).collect();
@@ -486,7 +486,7 @@ mod tests {
 
     #[test]
     fn test_analyze_clean_project() {
-        let rules = load_rules();
+        let rules = load_rules().unwrap();
         // Modern deps that shouldn't trigger any rules
         let deps = vec![
             ResolvedDep {
@@ -511,7 +511,7 @@ mod tests {
             },
         ];
 
-        let suggestions = analyze(None, &deps, &rules);
+        let suggestions = analyze(None, &deps, &rules).unwrap();
         assert!(
             suggestions.is_empty(),
             "modern deps should not trigger any suggestions"

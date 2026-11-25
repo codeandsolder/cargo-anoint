@@ -93,12 +93,11 @@ fn finding(
     }
 }
 
-pub(crate) fn analyze(deps: &[ResolvedDep], package: Option<&str>) -> Vec<Suggestion> {
-    static POLICY: std::sync::OnceLock<Policy> = std::sync::OnceLock::new();
-    let policy = POLICY.get_or_init(|| {
-        serde_json::from_str(include_str!("../data/organization.json"))
-            .expect("embedded organization policy must be valid")
-    });
+pub(crate) fn analyze(
+    deps: &[ResolvedDep],
+    package: Option<&str>,
+) -> serde_json::Result<Vec<Suggestion>> {
+    let policy: Policy = serde_json::from_str(include_str!("../data/organization.json"))?;
     let direct: Vec<_> = deps.iter().filter(|dep| dep.is_direct).collect();
     let names: BTreeSet<&str> = direct.iter().map(|dep| dep.name.as_str()).collect();
     let mut results = Vec::new();
@@ -205,7 +204,7 @@ pub(crate) fn analyze(deps: &[ResolvedDep], package: Option<&str>) -> Vec<Sugges
             }
         }
     }
-    results
+    Ok(results)
 }
 
 #[cfg(test)]
@@ -236,20 +235,24 @@ mod tests {
             Some("git+https://github.com/codeandsolder/wreq-exp.git?rev=abc#abc"),
             true,
         );
-        assert!(analyze(&[good], None).is_empty());
+        assert!(analyze(&[good], None).unwrap().is_empty());
         let upstream = dep(
             "wreq",
             Some("git+https://github.com/0x676e67/wreq#abc"),
             true,
         );
-        assert_eq!(analyze(&[upstream], None).len(), 1);
+        assert_eq!(analyze(&[upstream], None).unwrap().len(), 1);
         let registry = dep(
             "btls",
             Some("registry+https://github.com/rust-lang/crates.io-index"),
             true,
         );
-        assert_eq!(analyze(&[registry], None).len(), 1);
-        assert!(analyze(&[dep("btls", None, true)], None).is_empty());
+        assert_eq!(analyze(&[registry], None).unwrap().len(), 1);
+        assert!(
+            analyze(&[dep("btls", None, true)], None)
+                .unwrap()
+                .is_empty()
+        );
         assert!(!preferred_source(
             "git+https://github.com/codeandsolder/wreq-exp-imposter#abc",
             "wreq-exp"
@@ -267,7 +270,8 @@ mod tests {
                 dep("ureq", None, false),
             ],
             Some("app"),
-        );
+        )
+        .unwrap();
         let combos: Vec<_> = findings
             .iter()
             .filter(|f| f.kind == SuggestionKind::CapabilityOverlap)
@@ -285,6 +289,7 @@ mod tests {
                 ],
                 None
             )
+            .unwrap()
             .is_empty()
         );
     }

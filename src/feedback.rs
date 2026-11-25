@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
 use regex::Regex;
 
@@ -82,8 +82,9 @@ fn normalize_path_sep(path: &Path) -> String {
 
 /// Best-effort: pull `fn foo` name from snippet or declaration line (including `async fn`).
 fn extract_rust_fn_name(snippet: &str) -> Option<&str> {
-    static FN_RE: OnceLock<Regex> = OnceLock::new();
-    let re = FN_RE.get_or_init(|| Regex::new(r"\bfn\s+([a-zA-Z_][a-zA-Z0-9_]*)").unwrap());
+    static FN_RE: LazyLock<Result<Regex, regex::Error>> =
+        LazyLock::new(|| Regex::new(r"\bfn\s+([a-zA-Z_][a-zA-Z0-9_]*)"));
+    let re = FN_RE.as_ref().ok()?;
     re.captures(snippet)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str())
