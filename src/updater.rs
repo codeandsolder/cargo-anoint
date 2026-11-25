@@ -27,15 +27,11 @@ struct BlessedData {
 
 #[derive(Debug, Deserialize)]
 struct CrateGroup {
-    #[allow(dead_code)]
-    name: Option<String>,
     subgroups: Vec<Subgroup>,
 }
 
 #[derive(Debug, Deserialize)]
 struct Subgroup {
-    #[allow(dead_code)]
-    name: Option<String>,
     purposes: Vec<Purpose>,
 }
 
@@ -367,9 +363,7 @@ mod tests {
     fn test_convert_minimal() {
         let data = BlessedData {
             crate_groups: vec![CrateGroup {
-                name: Some("Test".into()),
                 subgroups: vec![Subgroup {
-                    name: Some("Test".into()),
                     purposes: vec![Purpose {
                         name: "Logging".into(),
                         notes: None,
@@ -398,9 +392,7 @@ mod tests {
     fn test_convert_skips_single_rec() {
         let data = BlessedData {
             crate_groups: vec![CrateGroup {
-                name: None,
                 subgroups: vec![Subgroup {
-                    name: None,
                     purposes: vec![Purpose {
                         name: "Temp files".into(),
                         notes: None,
@@ -422,9 +414,7 @@ mod tests {
         // Co-equal alternatives without migration signals should NOT generate rules
         let data = BlessedData {
             crate_groups: vec![CrateGroup {
-                name: None,
                 subgroups: vec![Subgroup {
-                    name: None,
                     purposes: vec![Purpose {
                         name: "Arrays".into(),
                         notes: None,
@@ -458,9 +448,7 @@ mod tests {
     fn test_convert_with_migration_signal() {
         let data = BlessedData {
             crate_groups: vec![CrateGroup {
-                name: None,
                 subgroups: vec![Subgroup {
-                    name: None,
                     purposes: vec![Purpose {
                         name: "Logging".into(),
                         notes: None,

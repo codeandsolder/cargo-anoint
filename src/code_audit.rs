@@ -779,7 +779,10 @@ fn line_complexity(line: &str) -> usize {
     score
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Diagnostic construction carries source location and explanatory text"
+)]
 fn make_alert(
     kind: BullshitKind,
     confidence: f32,
@@ -804,7 +807,10 @@ fn make_alert(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Diagnostic construction carries source location and explanatory text"
+)]
 fn alert_from_line(
     kind: BullshitKind,
     confidence: f32,

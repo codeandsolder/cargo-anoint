@@ -15,14 +15,18 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  check:
-    uses: codeandsolder/ci-workflows/.github/workflows/rust-sccache.yml@f79aef2a560a2c1c0f06f3c657f690f778040156
+  strict-rust:
+    uses: codeandsolder/rust-skills2/.github/workflows/strict-rust.yml@7d0552029497cf094787c3593f804d5bce137c4b # main
     with:
-      rust-components: clippy rustfmt
+      rust-toolchain: nightly-2026-11-19
+      cargo-args: "--locked --workspace --all-targets"
+      apt-packages: "clang libclang-dev cmake"
+      allow-test-panics: true
+  check:
+    uses: codeandsolder/ci-workflows/.github/workflows/rust-sccache.yml@f79aef2a560a2c1c0f06f3c657f690f778040156 # main
+    with:
       test-impact-mode: none
       command: |
-        cargo fmt --all -- --check
-        cargo clippy --locked --all-targets -- -D warnings
         cargo test --locked
         cargo install --path . --debug --locked
         cargo anoint --help
@@ -30,5 +34,3 @@ jobs:
         cargo anoint --feedback
         cargo install cargo-audit --version 0.23.0 --locked
         cargo audit
-  quarantine:
-    uses: codeandsolder/ci-workflows/.github/workflows/cargo-release-quarantine.yml@f79aef2a560a2c1c0f06f3c657f690f778040156
