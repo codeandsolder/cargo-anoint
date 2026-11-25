@@ -12,20 +12,29 @@ fn main() -> Result<()> {
     let args = cli::Cli::parse();
 
     match args.command {
-        cli::Commands::Bless(command) => match command.command {
-            Some(cli::BlessSubcommand::Bs(opts)) => run_code_audit_command(opts),
-            None => run_bless_command(command.opts),
+        cli::Commands::Anoint(command) => match command.command {
+            Some(cli::AnointSubcommand::Bs(opts)) => run_code_audit_command(opts),
+            None => run_anoint_command(command.opts),
         },
         cli::Commands::Bs(opts) => run_code_audit_command(opts),
     }
 }
 
-fn use_tagged_suggestions(opts: &cli::BlessOpts) -> bool {
+fn resolution_options(opts: &cli::AnointOpts) -> cargo_anoint::parser::ResolutionOptions {
+    cargo_anoint::parser::ResolutionOptions {
+        all_features: opts.all_features,
+        features: opts.features.clone(),
+        no_default_features: opts.no_default_features,
+        target: opts.target.clone(),
+    }
+}
+
+fn use_tagged_suggestions(opts: &cli::AnointOpts) -> bool {
     opts.workspace || !opts.package.is_empty()
 }
 
 fn unique_direct_dependency_versions(
-    snapshots: &[cargo_bless::parser::PackageResult],
+    snapshots: &[cargo_anoint::parser::PackageResult],
 ) -> Vec<(&str, &str)> {
     let mut seen = std::collections::HashSet::new();
     snapshots
@@ -41,7 +50,7 @@ fn unique_direct_dependency_versions(
 
 fn parse_fail_on_levels(
     raw: &[String],
-) -> Result<Option<HashSet<cargo_bless::suggestions::Impact>>> {
+) -> Result<Option<HashSet<cargo_anoint::suggestions::Impact>>> {
     if raw.is_empty() {
         return Ok(None);
     }
@@ -53,17 +62,17 @@ fn parse_fail_on_levels(
         }
         match p.as_str() {
             "low" => {
-                out.insert(cargo_bless::suggestions::Impact::Low);
+                out.insert(cargo_anoint::suggestions::Impact::Low);
             }
             "medium" => {
-                out.insert(cargo_bless::suggestions::Impact::Medium);
+                out.insert(cargo_anoint::suggestions::Impact::Medium);
             }
             "high" => {
-                out.insert(cargo_bless::suggestions::Impact::High);
+                out.insert(cargo_anoint::suggestions::Impact::High);
             }
             // Reserved alias: dependency suggestions only map to Low/Medium/High today.
             "critical" => {
-                out.insert(cargo_bless::suggestions::Impact::High);
+                out.insert(cargo_anoint::suggestions::Impact::High);
             }
             other => {
                 bail!(
@@ -80,16 +89,24 @@ fn parse_fail_on_levels(
 }
 
 fn dependency_fail_triggered(
-    suggestions: &[cargo_bless::suggestions::Suggestion],
-    levels: &HashSet<cargo_bless::suggestions::Impact>,
+    suggestions: &[cargo_anoint::suggestions::Suggestion],
+    levels: &HashSet<cargo_anoint::suggestions::Impact>,
 ) -> bool {
     suggestions.iter().any(|s| levels.contains(&s.impact))
 }
 
 fn maybe_fail_on_exit(
-    suggestions: &[cargo_bless::suggestions::Suggestion],
-    levels: &Option<HashSet<cargo_bless::suggestions::Impact>>,
+    suggestions: &[cargo_anoint::suggestions::Suggestion],
+    levels: &Option<HashSet<cargo_anoint::suggestions::Impact>>,
+    fail_on_overlap: bool,
 ) -> Result<()> {
+    if fail_on_overlap
+        && suggestions
+            .iter()
+            .any(|s| s.kind == cargo_anoint::suggestions::SuggestionKind::CapabilityOverlap)
+    {
+        bail!("exiting with non-zero status: potential overlapping dependency providers");
+    }
     if let Some(set) = levels {
         if dependency_fail_triggered(suggestions, set) {
             bail!("exiting with non-zero status: at least one dependency suggestion matched --fail-on");
@@ -98,7 +115,7 @@ fn maybe_fail_on_exit(
     Ok(())
 }
 
-fn run_bless_command(opts: cli::BlessOpts) -> Result<()> {
+fn run_anoint_command(opts: cli::AnointOpts) -> Result<()> {
     if opts.init_ci {
         return run_init_ci(opts.manifest_path.as_deref());
     }
@@ -132,41 +149,43 @@ fn run_bless_command(opts: cli::BlessOpts) -> Result<()> {
     }
 
     let run_code_audit = opts.audit_code;
-    let code_audit_config = cargo_bless::code_audit::config_from_policy(policy.as_ref());
-    let tagged = use_tagged_suggestions(&opts);
+    let code_audit_config = cargo_anoint::code_audit::config_from_policy(policy.as_ref());
+    let tagged = use_tagged_suggestions(&opts)
+        || policy.as_ref().is_some_and(|p| !p.allow_overlap.is_empty());
     let effective_all_targets =
         opts.all_targets || policy.as_ref().is_some_and(|p| p.settings.all_targets);
-    let snapshots = cargo_bless::parser::get_package_snapshots(
+    let snapshots = cargo_anoint::parser::get_package_snapshots(
         manifest,
         opts.workspace,
         &opts.package,
         effective_all_targets,
+        &resolution_options(&opts),
     )?;
-    let rules = cargo_bless::suggestions::load_rules();
+    let rules = cargo_anoint::suggestions::load_rules();
 
-    let mut per_pkg_suggestions: Vec<Vec<cargo_bless::suggestions::Suggestion>> = Vec::new();
+    let mut per_pkg_suggestions: Vec<Vec<cargo_anoint::suggestions::Suggestion>> = Vec::new();
     for snap in &snapshots {
         let mpath = snap.manifest_path.as_path();
         let raw = if tagged {
-            cargo_bless::suggestions::analyze_for_package(
+            cargo_anoint::suggestions::analyze_for_package(
                 Some(mpath),
                 &snap.deps,
                 &rules,
                 Some(snap.name.as_str()),
             )
         } else {
-            cargo_bless::suggestions::analyze(Some(mpath), &snap.deps, &rules)
+            cargo_anoint::suggestions::analyze(Some(mpath), &snap.deps, &rules)
         };
         per_pkg_suggestions.push(apply_policy(raw, policy.as_ref()));
     }
 
-    let all_suggestions: Vec<cargo_bless::suggestions::Suggestion> =
+    let all_suggestions: Vec<cargo_anoint::suggestions::Suggestion> =
         per_pkg_suggestions.iter().flatten().cloned().collect();
 
-    let packages_for_json: Vec<cargo_bless::output::JsonPackageOutput<'_>> = snapshots
+    let packages_for_json: Vec<cargo_anoint::output::JsonPackageOutput<'_>> = snapshots
         .iter()
         .zip(per_pkg_suggestions.iter())
-        .map(|(snap, sug)| cargo_bless::output::JsonPackageOutput {
+        .map(|(snap, sug)| cargo_anoint::output::JsonPackageOutput {
             name: snap.name.as_str(),
             version: snap.version.as_str(),
             manifest_path: snap.manifest_path.display().to_string(),
@@ -179,13 +198,13 @@ fn run_bless_command(opts: cli::BlessOpts) -> Result<()> {
             let reports: Vec<_> = snapshots
                 .iter()
                 .map(|s| {
-                    cargo_bless::code_audit::scan_project(
+                    cargo_anoint::code_audit::scan_project(
                         Some(s.manifest_path.as_path()),
                         &code_audit_config,
                     )
                 })
                 .collect::<Result<_, _>>()?;
-            Some(cargo_bless::code_audit::merge_reports(reports))
+            Some(cargo_anoint::code_audit::merge_reports(reports))
         } else {
             None
         };
@@ -194,30 +213,34 @@ fn run_bless_command(opts: cli::BlessOpts) -> Result<()> {
             && !opts.no_advisories
         {
             let dependencies = unique_direct_dependency_versions(&snapshots);
-            cargo_bless::advisories::fetch_advisories_batch_for_versions(&dependencies)
+            cargo_anoint::advisories::fetch_advisories_batch_for_versions(&dependencies)
         } else {
             Vec::new()
         };
-        let report = cargo_bless::output::JsonReportUnified {
-            cargo_bless_version: env!("CARGO_PKG_VERSION"),
+        let report = cargo_anoint::output::JsonReportUnified {
+            cargo_anoint_version: env!("CARGO_PKG_VERSION"),
             workspace_scan: opts.workspace || snapshots.len() > 1,
             packages: packages_for_json,
             code_audit: merged_audit.as_ref(),
             hardcoded_values: None,
             security_advisories: advisories_for_json,
         };
-        cargo_bless::output::render_unified_json(report);
-        maybe_fail_on_exit(&all_suggestions, &fail_levels)?;
+        cargo_anoint::output::render_unified_json(report);
+        maybe_fail_on_exit(
+            &all_suggestions,
+            &fail_levels,
+            opts.fail_on_overlap || policy.as_ref().is_some_and(|p| p.settings.fail_on_overlap),
+        )?;
         return Ok(());
     }
 
-    println!("🙏 cargo-bless v{}", env!("CARGO_PKG_VERSION"));
+    println!("🙏 cargo-anoint v{}", env!("CARGO_PKG_VERSION"));
     println!();
 
     if opts.update_rules {
-        cargo_bless::updater::update_rules()?;
+        cargo_anoint::updater::update_rules()?;
         println!();
-        println!("Rules updated. Run `cargo bless` to use them.");
+        println!("Candidate rules fetched; review changes using the update-suggestions binary before committing.");
         return Ok(());
     }
 
@@ -322,7 +345,7 @@ fn run_bless_command(opts: cli::BlessOpts) -> Result<()> {
             .flat_map(|s| s.current.split('+'))
             .collect();
 
-        match cargo_bless::intel::IntelClient::new() {
+        match cargo_anoint::intel::IntelClient::new() {
             Ok(client) => {
                 println!("{}", "🌐 Fetching live intelligence...".dimmed());
                 let result = client.fetch_bulk_intel(&crate_names);
@@ -352,10 +375,10 @@ fn run_bless_command(opts: cli::BlessOpts) -> Result<()> {
         HashMap::new()
     };
 
-    let views: Vec<cargo_bless::output::PackageSuggestionView<'_>> = snapshots
+    let views: Vec<cargo_anoint::output::PackageSuggestionView<'_>> = snapshots
         .iter()
         .zip(per_pkg_suggestions.iter())
-        .map(|(snap, sug)| cargo_bless::output::PackageSuggestionView {
+        .map(|(snap, sug)| cargo_anoint::output::PackageSuggestionView {
             name: snap.name.as_str(),
             version: snap.version.as_str(),
             manifest_path: snap.manifest_path.as_path(),
@@ -363,15 +386,15 @@ fn run_bless_command(opts: cli::BlessOpts) -> Result<()> {
         })
         .collect();
 
-    cargo_bless::output::render_packages_modernization(&views, &intel);
+    cargo_anoint::output::render_packages_modernization(&views, &intel);
 
     // Security advisory check (osv.dev) — one batch call for all direct deps
     if !effective_offline && !opts.no_advisories {
         let direct_dependencies = unique_direct_dependency_versions(&snapshots);
         if !direct_dependencies.is_empty() {
             let hits =
-                cargo_bless::advisories::fetch_advisories_batch_for_versions(&direct_dependencies);
-            cargo_bless::output::render_advisories(&hits);
+                cargo_anoint::advisories::fetch_advisories_batch_for_versions(&direct_dependencies);
+            cargo_anoint::output::render_advisories(&hits);
         }
     }
 
@@ -379,29 +402,28 @@ fn run_bless_command(opts: cli::BlessOpts) -> Result<()> {
         let reports: Vec<_> = snapshots
             .iter()
             .map(|s| {
-                cargo_bless::code_audit::scan_project(
+                cargo_anoint::code_audit::scan_project(
                     Some(s.manifest_path.as_path()),
                     &code_audit_config,
                 )
             })
             .collect::<Result<_, _>>()?;
-        let merged = cargo_bless::code_audit::merge_reports(reports);
-        cargo_bless::output::render_code_audit_report(&merged, opts.verbose);
+        let merged = cargo_anoint::code_audit::merge_reports(reports);
+        cargo_anoint::output::render_code_audit_report(&merged, opts.verbose);
     }
 
     if opts.fix && !all_suggestions.is_empty() {
         println!();
         for snap in &snapshots {
-            let pkg_sugs: Vec<cargo_bless::suggestions::Suggestion> =
-                if use_tagged_suggestions(&opts) {
-                    all_suggestions
-                        .iter()
-                        .filter(|s| s.package.as_deref() == Some(snap.name.as_str()))
-                        .cloned()
-                        .collect()
-                } else {
-                    all_suggestions.clone()
-                };
+            let pkg_sugs: Vec<cargo_anoint::suggestions::Suggestion> = if tagged {
+                all_suggestions
+                    .iter()
+                    .filter(|s| s.package.as_deref() == Some(snap.name.as_str()))
+                    .cloned()
+                    .collect()
+            } else {
+                all_suggestions.clone()
+            };
             if pkg_sugs.is_empty() {
                 continue;
             }
@@ -414,43 +436,49 @@ fn run_bless_command(opts: cli::BlessOpts) -> Result<()> {
                 )
                 .dimmed()
             );
-            cargo_bless::fix::apply(&pkg_sugs, &snap.manifest_path, opts.dry_run)?;
+            cargo_anoint::fix::apply(&pkg_sugs, &snap.manifest_path, opts.dry_run)?;
         }
     }
 
-    maybe_fail_on_exit(&all_suggestions, &fail_levels)?;
+    maybe_fail_on_exit(
+        &all_suggestions,
+        &fail_levels,
+        opts.fail_on_overlap || policy.as_ref().is_some_and(|p| p.settings.fail_on_overlap),
+    )?;
 
     Ok(())
 }
 
 fn run_summary_mode(
-    opts: &cli::BlessOpts,
-    fail_levels: &Option<HashSet<cargo_bless::suggestions::Impact>>,
-    policy: Option<&cargo_bless::policy::Policy>,
+    opts: &cli::AnointOpts,
+    fail_levels: &Option<HashSet<cargo_anoint::suggestions::Impact>>,
+    policy: Option<&cargo_anoint::policy::Policy>,
 ) -> Result<()> {
     let manifest = opts.manifest_path.as_deref();
-    let tagged = use_tagged_suggestions(opts);
+    let tagged =
+        use_tagged_suggestions(opts) || policy.is_some_and(|p| !p.allow_overlap.is_empty());
     let effective_all_targets = opts.all_targets || policy.is_some_and(|p| p.settings.all_targets);
-    let snapshots = cargo_bless::parser::get_package_snapshots(
+    let snapshots = cargo_anoint::parser::get_package_snapshots(
         manifest,
         opts.workspace,
         &opts.package,
         effective_all_targets,
+        &resolution_options(opts),
     )?;
-    let rules = cargo_bless::suggestions::load_rules();
+    let rules = cargo_anoint::suggestions::load_rules();
 
     let mut all = Vec::new();
     for snap in &snapshots {
         let mpath = snap.manifest_path.as_path();
         let raw = if tagged {
-            cargo_bless::suggestions::analyze_for_package(
+            cargo_anoint::suggestions::analyze_for_package(
                 Some(mpath),
                 &snap.deps,
                 &rules,
                 Some(snap.name.as_str()),
             )
         } else {
-            cargo_bless::suggestions::analyze(Some(mpath), &snap.deps, &rules)
+            cargo_anoint::suggestions::analyze(Some(mpath), &snap.deps, &rules)
         };
         all.extend(apply_policy(raw, policy));
     }
@@ -466,32 +494,36 @@ fn run_summary_mode(
         })
         .collect();
 
-    println!("🙏 cargo-bless v{}", env!("CARGO_PKG_VERSION"));
+    println!("🙏 cargo-anoint v{}", env!("CARGO_PKG_VERSION"));
     println!();
-    cargo_bless::output::render_summary(&scan_stats, &all);
+    cargo_anoint::output::render_summary(&scan_stats, &all);
     println!();
 
-    maybe_fail_on_exit(&all, fail_levels)?;
+    maybe_fail_on_exit(
+        &all,
+        fail_levels,
+        opts.fail_on_overlap || policy.is_some_and(|p| p.settings.fail_on_overlap),
+    )?;
     Ok(())
 }
 
-fn run_feedback_command(opts: cli::BlessOpts) -> Result<()> {
+fn run_feedback_command(opts: cli::AnointOpts) -> Result<()> {
     let manifest = opts.manifest_path.as_deref();
     let policy = load_policy(opts.policy.as_deref(), manifest)?;
-    let code_audit_config = cargo_bless::code_audit::config_from_policy(policy.as_ref());
+    let code_audit_config = cargo_anoint::code_audit::config_from_policy(policy.as_ref());
 
-    let deps = cargo_bless::parser::get_deps(manifest)?;
+    let deps = cargo_anoint::parser::get_deps(manifest)?;
     let direct_count = deps.iter().filter(|d| d.is_direct).count();
 
-    let rules = cargo_bless::suggestions::load_rules();
+    let rules = cargo_anoint::suggestions::load_rules();
     let suggestions = apply_policy(
-        cargo_bless::suggestions::analyze(manifest, &deps, &rules),
+        cargo_anoint::suggestions::analyze(manifest, &deps, &rules),
         policy.as_ref(),
     );
 
-    let report = cargo_bless::code_audit::scan_project(manifest, &code_audit_config)?;
+    let report = cargo_anoint::code_audit::scan_project(manifest, &code_audit_config)?;
 
-    cargo_bless::feedback::emit_feedback_stdout(
+    cargo_anoint::feedback::emit_feedback_stdout(
         env!("CARGO_PKG_VERSION"),
         manifest,
         direct_count,
@@ -504,14 +536,14 @@ fn run_feedback_command(opts: cli::BlessOpts) -> Result<()> {
 fn run_code_audit_command(opts: cli::CodeAuditOpts) -> Result<()> {
     let manifest = opts.manifest_path.as_deref();
     let policy = load_policy(opts.policy.as_deref(), manifest)?;
-    let mut code_audit_config = cargo_bless::code_audit::config_from_policy(policy.as_ref());
+    let mut code_audit_config = cargo_anoint::code_audit::config_from_policy(policy.as_ref());
     if opts.include_tests {
         code_audit_config.include_tests = true;
     }
     let report = if opts.diff {
-        cargo_bless::code_audit::scan_git_diff(manifest, &code_audit_config)?
+        cargo_anoint::code_audit::scan_git_diff(manifest, &code_audit_config)?
     } else {
-        cargo_bless::code_audit::scan_project(manifest, &code_audit_config)?
+        cargo_anoint::code_audit::scan_project(manifest, &code_audit_config)?
     };
 
     let bs_hits = if opts.hardcoded {
@@ -519,29 +551,29 @@ fn run_code_audit_command(opts: cli::CodeAuditOpts) -> Result<()> {
             .and_then(Path::parent)
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."));
-        cargo_bless::bs_detector::scan_dir(root)
+        cargo_anoint::bs_detector::scan_dir(root)
     } else {
         Vec::new()
     };
 
     if opts.sarif {
-        cargo_bless::output::render_sarif(&report);
+        cargo_anoint::output::render_sarif(&report);
     } else if opts.json {
-        let unified = cargo_bless::output::JsonReportUnified {
-            cargo_bless_version: env!("CARGO_PKG_VERSION"),
+        let unified = cargo_anoint::output::JsonReportUnified {
+            cargo_anoint_version: env!("CARGO_PKG_VERSION"),
             workspace_scan: false,
             packages: Vec::new(),
             code_audit: Some(&report),
             hardcoded_values: if opts.hardcoded { Some(&bs_hits) } else { None },
             security_advisories: Vec::new(),
         };
-        cargo_bless::output::render_unified_json(unified);
+        cargo_anoint::output::render_unified_json(unified);
     } else {
-        println!("🙏 cargo-bless v{}", env!("CARGO_PKG_VERSION"));
-        cargo_bless::output::render_code_audit_report(&report, opts.verbose);
+        println!("🙏 cargo-anoint v{}", env!("CARGO_PKG_VERSION"));
+        cargo_anoint::output::render_code_audit_report(&report, opts.verbose);
         if opts.hardcoded {
             println!();
-            cargo_bless::bs_detector::render_bs_hits(&bs_hits);
+            cargo_anoint::bs_detector::render_bs_hits(&bs_hits);
         }
     }
 
@@ -557,7 +589,7 @@ fn run_code_audit_command(opts: cli::CodeAuditOpts) -> Result<()> {
             .count();
         if gated_count > 0 {
             eprintln!(
-                "cargo-bless: {} finding(s) at confidence >= {:.2}; exiting with non-zero status.",
+                "cargo-anoint: {} finding(s) at confidence >= {:.2}; exiting with non-zero status.",
                 gated_count, threshold
             );
             std::process::exit(1);
@@ -570,13 +602,13 @@ fn run_code_audit_command(opts: cli::CodeAuditOpts) -> Result<()> {
 fn load_policy(
     explicit_path: Option<&Path>,
     manifest_path: Option<&Path>,
-) -> Result<Option<cargo_bless::policy::Policy>> {
+) -> Result<Option<cargo_anoint::policy::Policy>> {
     match explicit_path {
-        Some(path) => cargo_bless::policy::try_load_policy(path).map(Some),
+        Some(path) => cargo_anoint::policy::try_load_policy(path).map(Some),
         None => {
             let path = default_policy_path(manifest_path);
             if path.exists() {
-                cargo_bless::policy::try_load_policy(&path).map(Some)
+                cargo_anoint::policy::try_load_policy(&path).map(Some)
             } else {
                 Ok(None)
             }
@@ -589,10 +621,10 @@ fn default_policy_path(manifest_path: Option<&Path>) -> PathBuf {
         .and_then(Path::parent)
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."))
-        .join("bless.toml")
+        .join("anoint.toml")
 }
 
-const INIT_CI_WORKFLOW: &str = r#"name: cargo-bless
+const INIT_CI_WORKFLOW: &str = r#"name: cargo-anoint
 
 on:
   push:
@@ -614,21 +646,21 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
-      - name: Install cargo-bless
-        run: cargo install cargo-bless --locked
+      - name: Install cargo-anoint
+        run: cargo install --git https://github.com/codeandsolder/cargo-anoint --locked
 
       - name: Dependency modernization check
-        run: cargo bless --fail-on high --offline
+        run: cargo anoint --workspace --fail-on-overlap --offline
 
       - name: Code audit (SARIF)
-        run: cargo bless bs --sarif > bless-audit.sarif
+        run: cargo anoint bs --sarif > anoint-audit.sarif
         continue-on-error: true
 
       - name: Upload SARIF to GitHub code scanning
         uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
-          sarif_file: bless-audit.sarif
+          sarif_file: anoint-audit.sarif
 "#;
 
 fn run_init_ci(manifest_path: Option<&Path>) -> Result<()> {
@@ -638,7 +670,7 @@ fn run_init_ci(manifest_path: Option<&Path>) -> Result<()> {
         .unwrap_or_else(|| Path::new("."));
 
     let workflow_dir = base.join(".github").join("workflows");
-    let workflow_path = workflow_dir.join("bless.yml");
+    let workflow_path = workflow_dir.join("anoint.yml");
 
     if workflow_path.exists() {
         bail!(
@@ -653,13 +685,13 @@ fn run_init_ci(manifest_path: Option<&Path>) -> Result<()> {
         .with_context(|| format!("failed to write {}", workflow_path.display()))?;
 
     println!("🙏 Created {}", workflow_path.display());
-    println!("   Commit and push to enable cargo-bless CI.");
+    println!("   Commit and push to enable cargo-anoint CI.");
     println!();
     println!("   The workflow:");
-    println!("     • Gates merges when any dep suggestion has --fail-on high impact");
+    println!("     • Gates merges on curated potential capability overlaps");
     println!("     • Uploads code-audit findings as SARIF (GitHub code scanning / PR annotations)");
     println!();
-    println!("   Tip: add fail_on = [\"high\"] to bless.toml to enforce the gate without repeating the flag.");
+    println!("   Tip: add fail_on = [\"high\"] to anoint.toml to enforce the gate without repeating the flag.");
 
     Ok(())
 }
@@ -696,14 +728,14 @@ fn run_init_hooks(manifest_path: Option<&Path>) -> Result<()> {
     std::fs::create_dir_all(&hooks_dir)
         .with_context(|| format!("failed to create {}", hooks_dir.display()))?;
 
-    let hook_script = "#!/bin/sh\ncargo bless bs --fail-on-confidence 0.8\n";
+    let hook_script = "#!/bin/sh\ncargo anoint bs --fail-on-confidence 0.8\n";
     std::fs::write(&hook_path, hook_script)
         .with_context(|| format!("failed to write {}", hook_path.display()))?;
     std::fs::set_permissions(&hook_path, std::fs::Permissions::from_mode(0o755))
         .with_context(|| format!("failed to chmod {}", hook_path.display()))?;
 
     println!("🙏 Created {}", hook_path.display());
-    println!("   The hook runs `cargo bless bs --fail-on-confidence 0.8` before each commit.");
+    println!("   The hook runs `cargo anoint bs --fail-on-confidence 0.8` before each commit.");
     println!();
     println!("   Tip: adjust the threshold or add --policy to suppress known findings.");
 
@@ -713,7 +745,7 @@ fn run_init_hooks(manifest_path: Option<&Path>) -> Result<()> {
 fn run_explain(pattern: &str) -> Result<()> {
     use colored::Colorize;
 
-    let rules = cargo_bless::suggestions::load_rules();
+    let rules = cargo_anoint::suggestions::load_rules();
     let pattern_lower = pattern.to_lowercase();
     let matches: Vec<_> = rules
         .iter()
@@ -722,11 +754,11 @@ fn run_explain(pattern: &str) -> Result<()> {
 
     if matches.is_empty() {
         bail!(
-            "No rule found for '{pattern}'. Run `cargo bless` on a project to see active suggestions."
+            "No rule found for '{pattern}'. Run `cargo anoint` on a project to see active suggestions."
         );
     }
 
-    println!("🙏 cargo-bless — explain: {}", pattern.bold());
+    println!("🙏 cargo-anoint — explain: {}", pattern.bold());
 
     for rule in matches {
         println!();
@@ -775,7 +807,7 @@ fn textwrap_rule(s: &str) -> Vec<String> {
 }
 
 fn apply_code_audit_fixes(
-    report: &cargo_bless::code_audit::CodeAuditReport,
+    report: &cargo_anoint::code_audit::CodeAuditReport,
     dry_run: bool,
 ) -> Result<()> {
     use std::collections::BTreeSet;
@@ -783,7 +815,7 @@ fn apply_code_audit_fixes(
     let files_to_fix: BTreeSet<&std::path::PathBuf> = report
         .alerts
         .iter()
-        .filter(|a| a.kind == cargo_bless::code_audit::BullshitKind::UnwrapAbuse)
+        .filter(|a| a.kind == cargo_anoint::code_audit::BullshitKind::UnwrapAbuse)
         .map(|a| &a.file)
         .collect();
 
@@ -842,17 +874,25 @@ fn apply_code_audit_fixes(
 }
 
 fn apply_policy(
-    suggestions: Vec<cargo_bless::suggestions::Suggestion>,
-    policy: Option<&cargo_bless::policy::Policy>,
-) -> Vec<cargo_bless::suggestions::Suggestion> {
+    suggestions: Vec<cargo_anoint::suggestions::Suggestion>,
+    policy: Option<&cargo_anoint::policy::Policy>,
+) -> Vec<cargo_anoint::suggestions::Suggestion> {
     match policy {
-        Some(policy) => cargo_bless::policy::apply_policy(suggestions, policy),
+        Some(policy) => cargo_anoint::policy::apply_policy(suggestions, policy),
         None => suggestions,
     }
 }
 
-fn reject_invalid_flag_combinations(opts: &cli::BlessOpts) -> Result<()> {
+fn reject_invalid_flag_combinations(opts: &cli::AnointOpts) -> Result<()> {
     if opts.feedback {
+        if opts.fail_on_overlap
+            || opts.all_features
+            || opts.no_default_features
+            || !opts.features.is_empty()
+            || opts.target.is_some()
+        {
+            bail!("--feedback cannot be combined with overlap gating or feature/target selection");
+        }
         if opts.fix {
             bail!("--feedback cannot be combined with --fix");
         }
@@ -905,9 +945,9 @@ fn reject_invalid_flag_combinations(opts: &cli::BlessOpts) -> Result<()> {
     Ok(())
 }
 
-fn reject_unfinished_flags(opts: &cli::BlessOpts) -> Result<()> {
+fn reject_unfinished_flags(opts: &cli::AnointOpts) -> Result<()> {
     if opts.llm {
-        bail!("--llm is not implemented in cargo-bless yet");
+        bail!("--llm is not implemented in cargo-anoint yet");
     }
 
     Ok(())

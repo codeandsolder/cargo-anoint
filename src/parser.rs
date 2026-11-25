@@ -21,6 +21,7 @@ pub struct ResolvedDep {
     pub source: Option<String>,
     pub repository: Option<String>,
     pub is_direct: bool,
+    pub direct_kinds: Vec<DependencyKind>,
 }
 
 /// One Cargo package in the workspace (or the resolved root crate) plus its dependency tree.
@@ -92,7 +93,12 @@ fn build_pkg_lookup(metadata: &cargo_metadata::Metadata) -> HashMap<String, Pack
 /// **Key change**: uses `resolve.nodes[].features` for the **actual enabled features**
 /// rather than `pkg.features.keys()` which only lists declared/available features.
 pub fn get_deps(manifest_path: Option<&Path>) -> Result<Vec<ResolvedDep>> {
-    let snapshots = fetch_metadata_and_snapshots(manifest_path, SnapshotMode::RootOnly, false)?;
+    let snapshots = fetch_metadata_and_snapshots(
+        manifest_path,
+        SnapshotMode::RootOnly,
+        false,
+        &ResolutionOptions::default(),
+    )?;
     snapshots
         .into_iter()
         .next()
@@ -108,11 +114,20 @@ pub fn get_deps(manifest_path: Option<&Path>) -> Result<Vec<ResolvedDep>> {
 ///
 /// `all_targets` widens what counts as a "direct" dep to include `[dev-dependencies]` and
 /// `[build-dependencies]` in addition to normal `[dependencies]`.
+#[derive(Debug, Default)]
+pub struct ResolutionOptions {
+    pub all_features: bool,
+    pub features: Vec<String>,
+    pub no_default_features: bool,
+    pub target: Option<String>,
+}
+
 pub fn get_package_snapshots(
     manifest_path: Option<&Path>,
     workspace_all_members: bool,
     package_filters: &[String],
     all_targets: bool,
+    resolution: &ResolutionOptions,
 ) -> Result<Vec<PackageResult>> {
     fetch_metadata_and_snapshots(
         manifest_path,
@@ -121,6 +136,7 @@ pub fn get_package_snapshots(
             filters: package_filters,
         },
         all_targets,
+        resolution,
     )
 }
 
@@ -137,9 +153,26 @@ fn fetch_metadata_and_snapshots(
     manifest_path: Option<&Path>,
     mode: SnapshotMode<'_>,
     all_targets: bool,
+    resolution: &ResolutionOptions,
 ) -> Result<Vec<PackageResult>> {
     let mut cmd = metadata_command(manifest_path);
-    cmd.features(CargoOpt::AllFeatures);
+    if resolution.all_features {
+        cmd.features(CargoOpt::AllFeatures);
+    }
+    if resolution.no_default_features {
+        cmd.features(CargoOpt::NoDefaultFeatures);
+    }
+    if !resolution.features.is_empty() {
+        cmd.features(CargoOpt::SomeFeatures(resolution.features.clone()));
+    }
+    let mut args = Vec::new();
+    if lockfile_path(manifest_path).is_file() {
+        args.push("--locked".to_owned());
+    }
+    if let Some(target) = &resolution.target {
+        args.extend(["--filter-platform".to_owned(), target.clone()]);
+    }
+    cmd.other_options(args);
 
     let metadata = cmd.exec()?;
     let resolve = metadata
@@ -254,10 +287,30 @@ fn resolve_deps_for_root(
         .map(|d| d.pkg.to_string())
         .collect();
 
+    let mut reachable = HashSet::new();
+    let mut pending: Vec<_> = direct_dep_ids.iter().cloned().collect();
+    while let Some(id) = pending.pop() {
+        if !reachable.insert(id.clone()) {
+            continue;
+        }
+        if let Some(node) = node_map.get(&id) {
+            pending.extend(
+                node.deps
+                    .iter()
+                    .filter(|d| {
+                        d.dep_kinds
+                            .iter()
+                            .any(|k| k.kind != DependencyKind::Development)
+                    })
+                    .map(|d| d.pkg.to_string()),
+            );
+        }
+    }
+
     let mut deps = Vec::new();
 
     for node in &resolve.nodes {
-        if node.id == *root_pkg_id {
+        if node.id == *root_pkg_id || !reachable.contains(&node.id.to_string()) {
             continue;
         }
 
@@ -284,6 +337,14 @@ fn resolve_deps_for_root(
             source: pkg.source.as_ref().map(|s| s.to_string()),
             repository: pkg.repository.clone(),
             is_direct,
+            direct_kinds: root_node
+                .deps
+                .iter()
+                .filter(|edge| edge.pkg == node.id)
+                .flat_map(|edge| edge.dep_kinds.iter())
+                .filter(|kind| all_targets || kind.kind == DependencyKind::Normal)
+                .map(|kind| kind.kind)
+                .collect(),
         });
     }
 
@@ -305,8 +366,14 @@ fn metadata_command(manifest_path: Option<&Path>) -> MetadataCommand {
 }
 
 fn lockfile_path(manifest_path: Option<&Path>) -> PathBuf {
-    manifest_path
+    let base = manifest_path
         .and_then(Path::parent)
-        .map(|path| path.join("Cargo.lock"))
-        .unwrap_or_else(|| PathBuf::from("Cargo.lock"))
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let absolute = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
+    absolute
+        .ancestors()
+        .map(|p| p.join("Cargo.lock"))
+        .find(|p| p.is_file())
+        .unwrap_or_else(|| base.join("Cargo.lock"))
 }

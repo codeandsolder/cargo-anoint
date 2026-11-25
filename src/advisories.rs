@@ -10,9 +10,9 @@ use serde::{Deserialize, Serialize};
 
 const OSV_BATCH_URL: &str = "https://api.osv.dev/v1/querybatch";
 const USER_AGENT: &str = concat!(
-    "cargo-bless/",
+    "cargo-anoint/",
     env!("CARGO_PKG_VERSION"),
-    " (https://github.com/Ruffian-L/cargo-bless)"
+    " (https://github.com/codeandsolder/cargo-anoint)"
 );
 
 /// A single security advisory for a crate.

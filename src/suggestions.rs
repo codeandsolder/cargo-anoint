@@ -43,6 +43,8 @@ pub enum SuggestionKind {
     StdReplacement,
     /// Consolidate multiple crates doing the same thing.
     ComboWin,
+    /// Multiple independent providers of a curated capability.
+    CapabilityOverlap,
     /// Crate is unmaintained — switch to maintained fork/successor.
     Unmaintained,
 }
@@ -71,7 +73,7 @@ pub enum MigrationRisk {
     Low,
 }
 
-/// Whether cargo-bless may safely apply the suggestion itself.
+/// Whether cargo-anoint may safely apply the suggestion itself.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum AutofixSafety {
     /// Safe to apply by changing Cargo.toml only.
@@ -115,7 +117,9 @@ pub struct Rule {
 fn impact_for(kind: &SuggestionKind) -> Impact {
     match kind {
         SuggestionKind::Unmaintained | SuggestionKind::StdReplacement => Impact::High,
-        SuggestionKind::ModernAlternative | SuggestionKind::ComboWin => Impact::Medium,
+        SuggestionKind::ModernAlternative
+        | SuggestionKind::ComboWin
+        | SuggestionKind::CapabilityOverlap => Impact::Medium,
         SuggestionKind::FeatureOptimization => Impact::Low,
     }
 }
@@ -136,33 +140,10 @@ fn default_evidence_source() -> EvidenceSource {
     EvidenceSource::Heuristic
 }
 
-/// Load suggestion rules from the embedded database, optionally augmented by a
-/// **fresh** local cache of blessed.rs rules.
-///
-/// **Merge policy:** patterns in `data/suggestions.json` (embedded at compile time)
-/// are authoritative. Cached blessed-derived rules are appended only for patterns
-/// not already defined locally — same policy as `update-suggestions`.
+/// Load the reviewed, version-controlled rule database. Live cache entries must not change CI results.
 pub fn load_rules() -> Vec<Rule> {
-    let embedded: Vec<Rule> = {
-        let json = include_str!("../data/suggestions.json");
-        serde_json::from_str(json).expect("embedded suggestions.json should be valid")
-    };
-
-    let Some(cached_blessed) = crate::updater::load_cached_rules() else {
-        return embedded;
-    };
-
-    let embedded_patterns: std::collections::HashSet<String> =
-        embedded.iter().map(|r| r.pattern.clone()).collect();
-
-    let mut merged = embedded;
-    for rule in cached_blessed {
-        if !embedded_patterns.contains(&rule.pattern) {
-            merged.push(rule);
-        }
-    }
-
-    merged
+    serde_json::from_str(include_str!("../data/suggestions.json"))
+        .expect("embedded suggestions.json should be valid")
 }
 
 use std::fs;
@@ -244,6 +225,7 @@ pub fn analyze_for_package(
         }
     }
 
+    suggestions.extend(crate::organization::analyze(deps, package_label));
     suggestions
 }
 
@@ -338,6 +320,7 @@ mod tests {
                 source: Some("registry".into()),
                 repository: None,
                 is_direct: true,
+                direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
             ResolvedDep {
                 name: "serde".into(),
@@ -347,6 +330,7 @@ mod tests {
                 source: Some("registry".into()),
                 repository: None,
                 is_direct: true,
+                direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
         ];
 
@@ -368,6 +352,7 @@ mod tests {
                 source: Some("registry".into()),
                 repository: None,
                 is_direct: true,
+                direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
             ResolvedDep {
                 // Use a crate name that definitely isn't used in this test file
@@ -378,6 +363,7 @@ mod tests {
                 source: Some("registry".into()),
                 repository: None,
                 is_direct: true,
+                direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
         ];
 
@@ -395,7 +381,10 @@ mod tests {
             evidence_source: EvidenceSource::Heuristic,
         };
 
-        let suggestions = analyze(None, &deps, &[custom_rule]);
+        let suggestions: Vec<_> = analyze(None, &deps, &[custom_rule])
+            .into_iter()
+            .filter(|s| s.current == "reqwest+some_unused_crate")
+            .collect();
         assert_eq!(suggestions.len(), 1);
         assert_eq!(suggestions[0].current, "reqwest+some_unused_crate");
         assert!(matches!(
@@ -417,11 +406,14 @@ mod tests {
             source: Some("registry".into()),
             repository: None,
             is_direct: true,
+            direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
         }];
 
         let suggestions = analyze(None, &deps, &rules);
         assert!(
-            suggestions.is_empty(),
+            !suggestions
+                .iter()
+                .any(|s| s.kind == SuggestionKind::ComboWin),
             "combo rule should not fire with only one of the pair"
         );
     }
@@ -436,7 +428,8 @@ mod tests {
             available_features: vec![],
             source: Some("registry".into()),
             repository: None,
-            is_direct: false, // transitive — should be ignored
+            is_direct: false,
+            direct_kinds: vec![], // transitive — should be ignored
         }];
 
         let suggestions = analyze(None, &deps, &rules);
@@ -458,6 +451,7 @@ mod tests {
                 source: Some("registry".into()),
                 repository: None,
                 is_direct: true,
+                direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
             ResolvedDep {
                 name: "structopt".into(),
@@ -467,6 +461,7 @@ mod tests {
                 source: Some("registry".into()),
                 repository: None,
                 is_direct: true,
+                direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
             ResolvedDep {
                 name: "memmap".into(),
@@ -476,6 +471,7 @@ mod tests {
                 source: Some("registry".into()),
                 repository: None,
                 is_direct: true,
+                direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
         ];
 
@@ -501,6 +497,7 @@ mod tests {
                 source: Some("registry".into()),
                 repository: None,
                 is_direct: true,
+                direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
             ResolvedDep {
                 name: "serde".into(),
@@ -510,6 +507,7 @@ mod tests {
                 source: Some("registry".into()),
                 repository: None,
                 is_direct: true,
+                direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
         ];
 

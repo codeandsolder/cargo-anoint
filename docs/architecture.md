@@ -1,6 +1,6 @@
 # Architecture overview
 
-`cargo-bless` is a normal Cargo subcommand binary (`cargo bless`). The library crate (`cargo_bless`) holds the pipeline; `src/main.rs` wires CLI → library.
+`cargo-anoint` is a normal Cargo subcommand binary (`cargo anoint`). The library crate (`cargo_anoint`) holds the pipeline; `src/main.rs` wires CLI → library.
 
 ## Module map (matches docs.rs)
 
@@ -8,17 +8,17 @@
 |--------|------|
 | `parser` | `cargo_metadata` — resolved dependency tree, direct vs transitive, features |
 | `suggestions` | Embedded `data/suggestions.json` rules (50 patterns); optionally augmented by fresh blessed-rs cache (**local patterns override cache**). Match deps and output `Suggestion` values |
-| `policy` | Optional `bless.toml` — ignore packages, limits, code-audit filters |
-| `intel` | Optional crates.io + GitHub metadata (cached under `~/.cache/cargo-bless/`); skipped when `--offline` or `[settings].offline` |
+| `policy` | Optional `anoint.toml` — ignore packages, limits, code-audit filters |
+| `intel` | Optional crates.io + GitHub metadata (cached under `~/.cache/cargo-anoint/`); skipped when `--offline` or `[settings].offline` |
 | `advisories` | Optional osv.dev batch advisory lookup for exact resolved direct-dependency versions; skipped when `--offline` or `--no-advisories`; non-fatal |
 | `feedback` | `--feedback` — aggregate counts + code-audit "hotspots" without listing crate names or hitting the network |
 | `output` | Human-readable reports, JSON helpers (`JsonReportUnified`), code-audit summary, advisory rendering |
 | `fix` | `toml_edit` — apply `Cargo.toml`-only autofixes; backup + optional `cargo update` |
-| `updater` | `cargo bless --update-rules` — refresh rules from blessed.rs JSON |
+| `updater` | `cargo anoint --update-rules` — refresh rules from blessed.rs JSON |
 | `code_audit` | Static bullshit-detector pass; scans `src/` by default; `#[test]`/`#[cfg(test)]` blocks masked via tree-sitter; opt in to `tests/`/`examples/`/`benches/` with `--include-tests` |
 | `bs_detector` | Hardcoded-value scanner (`--hardcoded`): magic numbers, API keys, IPs, URLs, credentials |
 
-## Typical `cargo bless` flow
+## Typical `cargo anoint` flow
 
 1. Parse CLI (`src/cli.rs`) → validate flag combinations (`main.rs`).
 2. Resolve deps (`parser`).
@@ -29,11 +29,11 @@
 7. If `--audit-code`, scan sources (`code_audit::scan_project`) and print findings (`output::render_code_audit_report`).
 8. If `--fix`, apply Toml edits (`fix::apply`).
 
-`cargo bless bs` / `cargo bless … bs …` skips dependency linting and runs only `code_audit` (optionally `--diff` for changed lines vs `HEAD`, `--fix` for `.unwrap()` → `.expect()`, `--sarif` for GitHub code scanning).
+`cargo anoint bs` / `cargo anoint … bs …` skips dependency linting and runs only `code_audit` (optionally `--diff` for changed lines vs `HEAD`, `--fix` for `.unwrap()` → `.expect()`, `--sarif` for GitHub code scanning).
 
 ## Data flow boundaries
 
 - **Trust metadata** on suggestions (`impact`, `confidence`, `migration_risk`, `autofix_safety`, `evidence_source`) is rule-driven; `--fix` only applies suggestions marked Cargo.toml-safe.
 - **Code audit** scans `src/` only by default; uses tree-sitter-rust to parse and mask string literals, comments, and test blocks before running line-pattern detectors.
-- **`cargo bless bs --fix`** is the only operation that modifies `.rs` files; it only touches `UnwrapAbuse` findings and writes `*.rs.bak` backups.
+- **`cargo anoint bs --fix`** is the only operation that modifies `.rs` files; it only touches `UnwrapAbuse` findings and writes `*.rs.bak` backups.
 - **`--feedback`** always runs suggestion analysis + full code audit for the chosen manifest but does **not** perform crates.io/GitHub/osv.dev fetches — intended for voluntary, low-leak summaries.

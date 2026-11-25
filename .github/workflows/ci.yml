@@ -24,17 +24,17 @@ jobs:
           toolchain: ${{ matrix.toolchain }}
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check
-      - run: cargo clippy -- -D warnings
+      - run: cargo check --locked
+      - run: cargo clippy --locked -- -D warnings
         if: matrix.toolchain == 'stable'
-      - run: cargo test
+      - run: cargo test --locked
       - name: Install smoke test
         if: matrix.toolchain == 'stable'
         run: |
-          cargo install --path . --debug
-          cargo bless --help
-          cargo bless --offline --no-audit-code
-          cargo bless --feedback >/tmp/feedback-smoke.txt
+          cargo install --path . --debug --locked
+          cargo anoint --help
+          cargo anoint --offline --no-audit-code
+          cargo anoint --feedback >/tmp/feedback-smoke.txt
           wc -l /tmp/feedback-smoke.txt
       - name: Run security audit
         if: matrix.toolchain == 'stable'

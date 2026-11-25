@@ -30,4 +30,4 @@ To eyeball blessed.rs tone against the live site (outside of `crates.json` alone
 4. After merge: tag `vX.Y.Z` on the release commit when it matches what you publish.
 5. `cargo publish` (requires `cargo login`).
 
-User-agent strings for outbound HTTP now follow `cargo-bless/` + `CARGO_PKG_VERSION` (`intel`, `updater`).
+User-agent strings for outbound HTTP now follow `cargo-anoint/` + `CARGO_PKG_VERSION` (`intel`, `updater`).
