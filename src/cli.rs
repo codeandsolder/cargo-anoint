@@ -1,6 +1,6 @@
 use clap::{Args, Parser, Subcommand};
 
-/// Cargo subcommand wrapper — invoked as `cargo bless`.
+/// Cargo subcommand wrapper — invoked as `cargo anoint`.
 #[derive(Parser, Debug)]
 #[command(name = "cargo", bin_name = "cargo")]
 pub struct Cli {
@@ -10,29 +10,29 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Bless your dependencies — modernize, optimize, and stay current.
-    Bless(BlessCommand),
+    /// Anoint your dependencies — modernize, optimize, and stay current.
+    Anoint(AnointCommand),
     /// Run only the bullshit detector code audit.
     Bs(CodeAuditOpts),
 }
 
 #[derive(Args, Debug)]
-pub struct BlessCommand {
+pub struct AnointCommand {
     #[command(flatten)]
-    pub opts: BlessOpts,
+    pub opts: AnointOpts,
 
     #[command(subcommand)]
-    pub command: Option<BlessSubcommand>,
+    pub command: Option<AnointSubcommand>,
 }
 
 #[derive(Subcommand, Debug)]
-pub enum BlessSubcommand {
+pub enum AnointSubcommand {
     /// Run only the bullshit detector code audit.
     Bs(CodeAuditOpts),
 }
 
 #[derive(Args, Debug)]
-pub struct BlessOpts {
+pub struct AnointOpts {
     /// Apply suggested changes to Cargo.toml only (`*.toml.bak` backup before write; never touches `.rs`).
     #[arg(long)]
     pub fix: bool,
@@ -48,7 +48,7 @@ pub struct BlessOpts {
     /// Short paste-friendly dependency summary: counts, impacts, and deduped suggestion patterns (not JSON; omits live intel).
     #[arg(long)]
     pub summary: bool,
-    /// Fetch the latest rules from blessed.rs and update the local cache.
+    /// Fetch candidate blessed.rs rules for review (does not change the embedded policy).
     #[arg(long)]
     pub update_rules: bool,
 
@@ -76,6 +76,9 @@ pub struct BlessOpts {
     /// `critical` is treated as **high** until a separate code-audit gate exists.
     #[arg(long, value_delimiter = ',')]
     pub fail_on: Vec<String>,
+    /// Fail only on curated potential capability overlaps (independent of --fail-on impact levels).
+    #[arg(long)]
+    pub fail_on_overlap: bool,
 
     /// Analyze every workspace member’s `Cargo.toml` (one `cargo metadata` call).
     #[arg(long)]
@@ -87,12 +90,24 @@ pub struct BlessOpts {
     /// Include dev-dependencies and build-dependencies in analysis.
     #[arg(long)]
     pub all_targets: bool,
+    /// Resolve all optional features; otherwise use Cargo default features.
+    #[arg(long, conflicts_with_all = ["no_default_features", "features"])]
+    pub all_features: bool,
+    /// Resolve specified Cargo features (comma-separated).
+    #[arg(long, value_delimiter = ',')]
+    pub features: Vec<String>,
+    /// Disable default Cargo features.
+    #[arg(long)]
+    pub no_default_features: bool,
+    /// Filter dependency resolution to a Cargo target triple.
+    #[arg(long)]
+    pub target: Option<String>,
 
-    /// Do not fetch online data; use only the local rule cache.
+    /// Skip live advisory and crate-intelligence requests; Cargo still resolves dependencies.
     #[arg(long)]
     pub offline: bool,
 
-    /// Path to a bless.toml policy file for custom rules and overrides.
+    /// Path to an anoint.toml policy file for custom rules and overrides.
     #[arg(long, value_name = "PATH")]
     pub policy: Option<std::path::PathBuf>,
 
@@ -100,7 +115,7 @@ pub struct BlessOpts {
     #[arg(long)]
     pub verbose: bool,
 
-    /// Write a starter GitHub Actions workflow to .github/workflows/bless.yml and exit.
+    /// Write a starter GitHub Actions workflow to .github/workflows/anoint.yml and exit.
     #[arg(long)]
     pub init_ci: bool,
 
@@ -131,7 +146,7 @@ pub struct CodeAuditOpts {
     #[arg(long)]
     pub diff: bool,
 
-    /// Path to a bless.toml policy file for code-audit suppressions.
+    /// Path to an anoint.toml policy file for code-audit suppressions.
     #[arg(long, value_name = "PATH")]
     pub policy: Option<std::path::PathBuf>,
 

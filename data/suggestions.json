@@ -108,46 +108,10 @@
     "evidence_source": "BlessedRs"
   },
   {
-    "pattern": "reqwest+serde_json",
-    "replacement": "reqwest with \"json\" feature",
-    "kind": "FeatureOptimization",
-    "reason": "reqwest can deserialize JSON directly when its json feature is enabled; cargo-bless only suggests this when serde_json is not used directly in source",
-    "source": "reqwest docs",
-    "condition": null,
-    "confidence": "High",
-    "migration_risk": "Low",
-    "autofix_safety": "CargoTomlOnly",
-    "evidence_source": "CrateDocs"
-  },
-  {
-    "pattern": "tokio+async-std",
-    "replacement": "tokio only",
-    "kind": "ComboWin",
-    "reason": "using two async runtimes usually adds complexity; consolidate only after checking runtime boundaries and dependencies",
-    "source": "blessed.rs",
-    "condition": null,
-    "confidence": "Medium",
-    "migration_risk": "High",
-    "autofix_safety": "ManualOnly",
-    "evidence_source": "BlessedRs"
-  },
-  {
     "pattern": "env_logger",
     "replacement": "tracing-subscriber",
     "kind": "ModernAlternative",
     "reason": "tracing-subscriber pairs with tracing for structured, filterable logging; keep env_logger if log-based output is intentionally simple",
-    "source": "blessed.rs",
-    "condition": null,
-    "confidence": "Medium",
-    "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
-    "evidence_source": "BlessedRs"
-  },
-  {
-    "pattern": "log+env_logger",
-    "replacement": "tracing + tracing-subscriber",
-    "kind": "ComboWin",
-    "reason": "tracing plus tracing-subscriber is the modern observability stack, but migration requires source instrumentation choices",
     "source": "blessed.rs",
     "condition": null,
     "confidence": "Medium",
@@ -240,18 +204,6 @@
     "evidence_source": "BlessedRs"
   },
   {
-    "pattern": "bytes+try_from_bytes",
-    "replacement": "bytes with built-in zero-copy slicing",
-    "kind": "FeatureOptimization",
-    "reason": "bytes already provides the core zero-copy byte buffer primitives; verify the helper crate is not adding project-specific parsing behavior",
-    "source": "bytes docs",
-    "condition": null,
-    "confidence": "Medium",
-    "migration_risk": "Low",
-    "autofix_safety": "ManualOnly",
-    "evidence_source": "CrateDocs"
-  },
-  {
     "pattern": "num_cpus",
     "replacement": "std::thread::available_parallelism",
     "kind": "StdReplacement",
@@ -284,32 +236,8 @@
     "condition": null,
     "confidence": "High",
     "migration_risk": "Low",
-    "autofix_safety": "CargoTomlOnly",
+    "autofix_safety": "ManualOnly",
     "evidence_source": "CrateDocs"
-  },
-  {
-    "pattern": "crossbeam-utils",
-    "replacement": "std::sync primitives or parking_lot",
-    "kind": "ModernAlternative",
-    "reason": "some crossbeam-utils use cases are now covered by std, while parking_lot may fit some locking needs; inspect actual APIs before changing",
-    "source": "blessed.rs",
-    "condition": null,
-    "confidence": "Low",
-    "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
-    "evidence_source": "BlessedRs"
-  },
-  {
-    "pattern": "hyper+serde_json",
-    "replacement": "axum with built-in JSON support",
-    "kind": "ComboWin",
-    "reason": "axum can reduce boilerplate for application HTTP JSON handling, but hyper remains right for lower-level HTTP code",
-    "source": "blessed.rs",
-    "condition": null,
-    "confidence": "Low",
-    "migration_risk": "High",
-    "autofix_safety": "ManualOnly",
-    "evidence_source": "BlessedRs"
   },
   {
     "pattern": "clap+clap_derive",
@@ -320,7 +248,7 @@
     "condition": null,
     "confidence": "High",
     "migration_risk": "Low",
-    "autofix_safety": "CargoTomlOnly",
+    "autofix_safety": "ManualOnly",
     "evidence_source": "CrateDocs"
   },
   {
@@ -360,30 +288,6 @@
     "evidence_source": "Heuristic"
   },
   {
-    "pattern": "version_check",
-    "replacement": "rust-version in Cargo.toml or cfg_attr",
-    "kind": "ModernAlternative",
-    "reason": "version_check is a legacy crate for MSRV detection — use package.rust-version field instead",
-    "source": "Cargo docs",
-    "condition": null,
-    "confidence": "Medium",
-    "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
-    "evidence_source": "Heuristic"
-  },
-  {
-    "pattern": "semver",
-    "replacement": "built-in version parsing or cargo_metadata",
-    "kind": "ModernAlternative",
-    "reason": "semver crate is rarely needed directly — use cargo_metadata for dependency resolution",
-    "source": "blessed.rs",
-    "condition": null,
-    "confidence": "Medium",
-    "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
-    "evidence_source": "Heuristic"
-  },
-  {
     "pattern": "ggez",
     "replacement": "bevy",
     "kind": "ModernAlternative",
@@ -404,18 +308,6 @@
     "condition": null,
     "confidence": "High",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
-    "evidence_source": "CratesIo"
-  },
-  {
-    "pattern": "serde_yaml",
-    "replacement": "serde_yml",
-    "kind": "Unmaintained",
-    "reason": "serde_yaml was archived by its author (dtolnay) in 2024; serde_yml is the community-maintained fork with a compatible API and active releases.",
-    "source": "crates.io",
-    "condition": null,
-    "confidence": "High",
-    "migration_risk": "Low",
     "autofix_safety": "ManualOnly",
     "evidence_source": "CratesIo"
   },
@@ -552,18 +444,6 @@
     "evidence_source": "BlessedRs"
   },
   {
-    "pattern": "openssl",
-    "replacement": "rustls",
-    "kind": "ModernAlternative",
-    "reason": "openssl requires a native C library (libssl) and is a frequent source of CVEs; rustls is a pure-Rust TLS stack with no native dependencies and a strong security track record.",
-    "source": "blessed.rs",
-    "condition": null,
-    "confidence": "Medium",
-    "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
-    "evidence_source": "BlessedRs"
-  },
-  {
     "pattern": "termion",
     "replacement": "crossterm",
     "kind": "ModernAlternative",
@@ -598,5 +478,17 @@
     "migration_risk": "Medium",
     "autofix_safety": "ManualOnly",
     "evidence_source": "BlessedRs"
+  },
+  {
+    "pattern": "openssl",
+    "replacement": "btls from https://github.com/codeandsolder/btls-fast",
+    "kind": "ModernAlternative",
+    "reason": "Prefer the organization BoringSSL bindings for compatible native TLS applications; OpenSSL-specific APIs, platform requirements, or cryptographic functionality can require OpenSSL itself.",
+    "source": "codeandsolder dependency policy",
+    "condition": "Native TLS with compatible BoringSSL API",
+    "confidence": "Medium",
+    "migration_risk": "High",
+    "autofix_safety": "ManualOnly",
+    "evidence_source": "Heuristic"
   }
 ]

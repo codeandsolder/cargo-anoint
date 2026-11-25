@@ -14,11 +14,11 @@ fn main() -> Result<()> {
 
     // Fetch live rules via the updater module
     let blessed_rules =
-        cargo_bless::updater::update_rules().context("failed to fetch blessed.rs rules")?;
+        cargo_anoint::updater::update_rules().context("failed to fetch blessed.rs rules")?;
 
     // Load existing hand-crafted rules from data/suggestions.json
     let data_path = Path::new("data/suggestions.json");
-    let existing: Vec<cargo_bless::suggestions::Rule> = if data_path.exists() {
+    let existing: Vec<cargo_anoint::suggestions::Rule> = if data_path.exists() {
         let json = fs::read_to_string(data_path).context("failed to read data/suggestions.json")?;
         serde_json::from_str(&json).context("failed to parse data/suggestions.json")?
     } else {

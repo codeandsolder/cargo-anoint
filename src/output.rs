@@ -18,6 +18,7 @@ fn print_suggestion_detail(suggestion: &Suggestion, intel: &HashMap<String, Crat
         SuggestionKind::FeatureOptimization => "•",
         SuggestionKind::StdReplacement => "•",
         SuggestionKind::ComboWin => "•",
+        SuggestionKind::CapabilityOverlap => "•",
         SuggestionKind::Unmaintained => "⚠️",
     };
 
@@ -170,7 +171,7 @@ pub fn render_packages_modernization(
     println!(
         "{}",
         format!(
-            "{} high-impact upgrade{} available. `--fix` only edits Cargo.toml (never Rust source). Run `cargo bless --fix --dry-run` to preview.",
+            "{} high-impact upgrade{} available. `--fix` only edits Cargo.toml (never Rust source). Run `cargo anoint --fix --dry-run` to preview.",
             high_count,
             if high_count == 1 { "" } else { "s" }
         )
@@ -184,6 +185,7 @@ fn suggestion_kind_slug(kind: &SuggestionKind) -> &'static str {
         SuggestionKind::FeatureOptimization => "feature_opt",
         SuggestionKind::StdReplacement => "std_replace",
         SuggestionKind::ComboWin => "combo_win",
+        SuggestionKind::CapabilityOverlap => "capability_overlap",
         SuggestionKind::Unmaintained => "unmaintained",
     }
 }
@@ -390,10 +392,10 @@ pub struct JsonPackageOutput<'a> {
     pub dependency_suggestions: &'a [Suggestion],
 }
 
-/// Machine-readable report: `cargo_bless_version`, `workspace_scan`, `packages`, optional `code_audit`.
+/// Machine-readable report: `cargo_anoint_version`, `workspace_scan`, `packages`, optional `code_audit`.
 #[derive(Serialize)]
 pub struct JsonReportUnified<'a> {
-    pub cargo_bless_version: &'a str,
+    pub cargo_anoint_version: &'a str,
     pub workspace_scan: bool,
     pub packages: Vec<JsonPackageOutput<'a>>,
     pub code_audit: Option<&'a CodeAuditReport>,
@@ -430,14 +432,14 @@ pub fn render_advisories(advisories: &[crate::advisories::CrateAdvisories]) {
     println!();
     println!(
         "{}",
-        "  Run `cargo audit` for patch guidance. Add affected crates to bless.toml ignore_packages to suppress.".dimmed()
+        "  Run `cargo audit` for patch guidance. Add affected crates to anoint.toml ignore_packages to suppress.".dimmed()
     );
 }
 
 pub fn render_unified_json(report: JsonReportUnified<'_>) {
     match serde_json::to_string_pretty(&report) {
         Ok(json) => println!("{}", json),
-        Err(e) => eprintln!("cargo-bless: failed to serialize JSON output: {}", e),
+        Err(e) => eprintln!("cargo-anoint: failed to serialize JSON output: {}", e),
     }
 }
 
@@ -456,7 +458,7 @@ pub fn render_json_report(suggestions: &[Suggestion], code_audit: Option<&CodeAu
     };
     match serde_json::to_string_pretty(&report) {
         Ok(json) => println!("{}", json),
-        Err(e) => eprintln!("cargo-bless: failed to serialize JSON output: {}", e),
+        Err(e) => eprintln!("cargo-anoint: failed to serialize JSON output: {}", e),
     }
 }
 
@@ -465,7 +467,7 @@ pub fn render_json_report(suggestions: &[Suggestion], code_audit: Option<&CodeAu
 pub fn render_json(suggestions: &[Suggestion]) {
     match serde_json::to_string_pretty(suggestions) {
         Ok(json) => println!("{}", json),
-        Err(e) => eprintln!("cargo-bless: failed to serialize JSON output: {}", e),
+        Err(e) => eprintln!("cargo-anoint: failed to serialize JSON output: {}", e),
     }
 }
 
@@ -602,9 +604,9 @@ pub fn render_sarif(report: &CodeAuditReport) {
         runs: vec![SarifRun {
             tool: SarifTool {
                 driver: SarifDriver {
-                    name: "cargo-bless",
+                    name: "cargo-anoint",
                     version: env!("CARGO_PKG_VERSION"),
-                    information_uri: "https://github.com/Ruffian-L/cargo-bless",
+                    information_uri: "https://github.com/codeandsolder/cargo-anoint",
                     rules,
                 },
             },
@@ -614,6 +616,6 @@ pub fn render_sarif(report: &CodeAuditReport) {
 
     match serde_json::to_string_pretty(&sarif) {
         Ok(json) => println!("{json}"),
-        Err(e) => eprintln!("cargo-bless: failed to serialize SARIF output: {e}"),
+        Err(e) => eprintln!("cargo-anoint: failed to serialize SARIF output: {e}"),
     }
 }

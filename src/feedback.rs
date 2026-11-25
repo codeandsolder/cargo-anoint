@@ -31,7 +31,7 @@ pub fn emit_feedback_stdout(
 
     let hotspots = top_hotspots(code_audit, &project_root, HOTSPOT_LIMIT);
 
-    println!("cargo-bless feedback block");
+    println!("cargo-anoint feedback block");
     println!("version: {version}");
     println!("direct_deps: {direct_deps}");
     println!("total_deps: {total_deps}");

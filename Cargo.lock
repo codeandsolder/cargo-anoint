@@ -139,7 +139,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "cargo-bless"
+name = "cargo-anoint"
 version = "0.4.1"
 dependencies = [
  "anyhow",

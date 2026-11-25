@@ -1,6 +1,6 @@
-# cargo-bless — documentation
+# cargo-anoint — documentation
 
-This folder holds **design and maintainer-facing** notes. The **user-facing** overview lives in the repository [README](https://github.com/Ruffian-L/cargo-bless#readme) (also what [crates.io](https://crates.io/crates/cargo-bless) shows).
+This folder holds **design and maintainer-facing** notes. The **user-facing** overview lives in the repository [README](https://github.com/codeandsolder/cargo-anoint#readme) (also what [crates.io](https://crates.io/crates/cargo-anoint) shows).
 
 | Doc | Purpose |
 |-----|---------|
@@ -10,6 +10,6 @@ This folder holds **design and maintainer-facing** notes. The **user-facing** ov
 | [phase3-workspace-design.md](./phase3-workspace-design.md) | Draft design for workspace-wide analysis (`--workspace` / `--package`) |
 | [`images/`](./images/) | Banner + pipeline illustrations used by the root README |
 
-**Generated API docs:** [docs.rs/cargo-bless](https://docs.rs/cargo-bless)
+**Generated API docs:** [docs.rs/cargo-anoint](https://docs.rs/cargo-anoint)
 
-**Change log:** [changelog.md](https://github.com/Ruffian-L/cargo-bless/blob/main/changelog.md) (repo root)
+**Change log:** [changelog.md](https://github.com/codeandsolder/cargo-anoint/blob/main/changelog.md) (repo root)

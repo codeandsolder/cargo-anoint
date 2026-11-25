@@ -14,9 +14,9 @@ use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
 const USER_AGENT: &str = concat!(
-    "cargo-bless/",
+    "cargo-anoint/",
     env!("CARGO_PKG_VERSION"),
-    " (https://github.com/Ruffian-L/cargo-bless)"
+    " (https://github.com/codeandsolder/cargo-anoint)"
 );
 const CACHE_TTL_SECS: u64 = 3600; // 1 hour
 
@@ -88,7 +88,7 @@ impl IntelClient {
             .build()
             .context("failed to create GitHub HTTP client")?;
 
-        let mut cache_dir = ProjectDirs::from("rs", "", "cargo-bless")
+        let mut cache_dir = ProjectDirs::from("rs", "", "cargo-anoint")
             .map(|dirs| dirs.cache_dir().to_path_buf())
             .filter(|path| !path.as_os_str().is_empty());
 

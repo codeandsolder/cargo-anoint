@@ -32,9 +32,9 @@ jobs:
         if: matrix.toolchain == 'stable'
         run: |
           cargo install --path . --debug
-          cargo bless --help
-          cargo bless --offline --no-audit-code
-          cargo bless --feedback >/tmp/feedback-smoke.txt
+          cargo anoint --help
+          cargo anoint --offline --no-audit-code
+          cargo anoint --feedback >/tmp/feedback-smoke.txt
           wc -l /tmp/feedback-smoke.txt
       - name: Run security audit
         if: matrix.toolchain == 'stable'

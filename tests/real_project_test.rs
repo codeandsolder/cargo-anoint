@@ -1,4 +1,4 @@
-//! Real-project integration tests: run cargo-bless against cloned Rust projects
+//! Real-project integration tests: run cargo-anoint against cloned Rust projects
 //! and verify it detects known outdated dependencies.
 //!
 //! Targets:
@@ -8,30 +8,26 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-/// Path to the cargo-bless binary built by this crate.
+/// Path to the cargo-anoint binary built by this crate.
 fn bless_bin() -> PathBuf {
-    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.push("target");
-    path.push("debug");
-    path.push("cargo-bless");
-    path
+    PathBuf::from(env!("CARGO_BIN_EXE_cargo-anoint"))
 }
 
-/// Run cargo-bless against a project directory and return stdout.
+/// Run cargo-anoint against a project directory and return stdout.
 fn run_bless(project_dir: &std::path::Path, args: &[&str]) -> String {
     let bin = bless_bin();
 
     if !bin.exists() {
-        eprintln!("cargo-bless binary not found at {:?}", bin);
+        eprintln!("cargo-anoint binary not found at {:?}", bin);
         return String::new();
     }
 
     let output = Command::new(&bin)
-        .arg("bless")
+        .arg("anoint")
         .args(args)
         .current_dir(project_dir)
         .output()
-        .expect("failed to execute cargo-bless");
+        .expect("failed to execute cargo-anoint");
 
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
@@ -277,10 +273,10 @@ fn test_fail_on_high_exits_nonzero() {
     }
 
     let output = Command::new(&bin)
-        .args(["bless", "--offline", "--fail-on=high"])
+        .args(["anoint", "--offline", "--fail-on=high"])
         .current_dir(&project_dir)
         .output()
-        .expect("failed to execute cargo-bless");
+        .expect("failed to execute cargo-anoint");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);

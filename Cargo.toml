@@ -1,13 +1,14 @@
 [package]
-name = "cargo-bless"
+name = "cargo-anoint"
+publish = false
 version = "0.4.1"
 edition = "2021"
 rust-version = "1.85"
-default-run = "cargo-bless"
+default-run = "cargo-anoint"
 description = "Modernize your Rust dependencies with blessed.rs + live intel"
 license = "MIT"
-repository = "https://github.com/Ruffian-L/cargo-bless"
-homepage = "https://github.com/Ruffian-L/cargo-bless"
+repository = "https://github.com/codeandsolder/cargo-anoint"
+homepage = "https://github.com/codeandsolder/cargo-anoint"
 readme = "README.md"
 keywords = ["cargo", "dependencies", "modernize", "blessed", "lint"]
 categories = ["development-tools::cargo-plugins"]
@@ -22,7 +23,7 @@ exclude = [
 ]
 
 [[bin]]
-name = "cargo-bless"
+name = "cargo-anoint"
 path = "src/main.rs"
 
 [[bin]]

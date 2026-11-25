@@ -2,13 +2,13 @@
 
 Design notes for a future **`--workspace` / `--package`** release (targeted at **v0.2.x**).
 
-**See also:** [Documentation index](./README.md) · [Architecture overview](./architecture.md) · [Root README](https://github.com/Ruffian-L/cargo-bless#readme)
+**See also:** [Documentation index](./README.md) · [Architecture overview](./architecture.md) · [Root README](https://github.com/codeandsolder/cargo-anoint#readme)
 
 ---
 
 ## Problem
 
-cargo-bless currently analyzes one Cargo.toml at a time. Real Rust projects use workspaces with multiple packages, each with their own dependency trees. A single `cargo bless` run should be able to audit the entire workspace.
+cargo-anoint currently analyzes one Cargo.toml at a time. Real Rust projects use workspaces with multiple packages, each with their own dependency trees. A single `cargo anoint` run should be able to audit the entire workspace.
 
 ## Goals
 
@@ -111,29 +111,29 @@ This is identical to `analyze` but attaches `package_name` to each suggestion fo
 
 let results = if opts.workspace {
     // Analyze all workspace members
-    let results = cargo_bless::parser::get_workspace_deps(manifest, None)?;
+    let results = cargo_anoint::parser::get_workspace_deps(manifest, None)?;
     
     // Load policy once
     let policy = load_policy_or_default(&opts.policy);
     
     // Apply suggestions per-package
     for result in &mut results {
-        let rules = cargo_bless::suggestions::load_rules();
-        result.suggestions = cargo_bless::suggestions::analyze_with_context(
+        let rules = cargo_anoint::suggestions::load_rules();
+        result.suggestions = cargo_anoint::suggestions::analyze_with_context(
             Some(&result.manifest_path),
             &result.deps,
             &rules,
             &result.name,
         );
-        result.suggestions = cargo_bless::policy::apply_policy(result.suggestions.clone(), &policy);
+        result.suggestions = cargo_anoint::policy::apply_policy(result.suggestions.clone(), &policy);
     }
     
     results
 } else {
     // Single package (current behavior)
-    let deps = cargo_bless::parser::get_deps(manifest)?;
-    let rules = cargo_bless::suggestions::load_rules();
-    let suggestions = cargo_bless::suggestions::analyze(manifest, &deps, &rules);
+    let deps = cargo_anoint::parser::get_deps(manifest)?;
+    let rules = cargo_anoint::suggestions::load_rules();
+    let suggestions = cargo_anoint::suggestions::analyze(manifest, &deps, &rules);
     
     vec![PackageResult {
         name: project_name,
@@ -197,8 +197,8 @@ When `--fix` is used with `--workspace`:
 
 ## Acceptance Criteria
 
-1. `cargo bless --workspace` on a multi-package workspace shows per-package results
-2. `cargo bless --package member-a` analyzes only that member
+1. `cargo anoint --workspace` on a multi-package workspace shows per-package results
+2. `cargo anoint --package member-a` analyzes only that member
 3. `--fix --workspace` applies fixes to all affected member manifests
 4. JSON output includes package context
 5. Single-package projects work identically to current behavior (no regression)
@@ -211,7 +211,7 @@ When `--fix` is used with `--workspace`:
 Tested against ripgrep v15.1.0 which has:
 - 11 workspace members (`crates/globset`, `crates/grep`, `crates/cli`, etc.)
 - 13 direct deps in root, 47 transitive
-- Current cargo-bless only analyzes the ROOT package
+- Current cargo-anoint only analyzes the ROOT package
 
 **What Phase 3 must capture:**
 - Each member has its own dependency set (e.g., `crates/cli` may have `clap` while root doesn't)

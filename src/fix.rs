@@ -423,15 +423,17 @@ mod tests {
             source: "test".into(),
             impact: match kind {
                 SuggestionKind::Unmaintained | SuggestionKind::StdReplacement => Impact::High,
-                SuggestionKind::ModernAlternative | SuggestionKind::ComboWin => Impact::Medium,
+                SuggestionKind::ModernAlternative
+                | SuggestionKind::ComboWin
+                | SuggestionKind::CapabilityOverlap => Impact::Medium,
                 SuggestionKind::FeatureOptimization => Impact::Low,
             },
             confidence: Confidence::High,
             migration_risk: MigrationRisk::Low,
             autofix_safety: match kind {
-                SuggestionKind::ModernAlternative | SuggestionKind::ComboWin => {
-                    AutofixSafety::ManualOnly
-                }
+                SuggestionKind::ModernAlternative
+                | SuggestionKind::ComboWin
+                | SuggestionKind::CapabilityOverlap => AutofixSafety::ManualOnly,
                 _ => AutofixSafety::CargoTomlOnly,
             },
             evidence_source: EvidenceSource::Heuristic,

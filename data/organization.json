@@ -1,0 +1,330 @@
+{
+  "forks": [
+    {
+      "repository": "wreq-exp",
+      "packages": [
+        "wreq"
+      ]
+    },
+    {
+      "repository": "btls-fast",
+      "packages": [
+        "btls",
+        "btls-sys",
+        "tokio-btls"
+      ]
+    },
+    {
+      "repository": "zlib-rs-fast",
+      "packages": [
+        "zlib-rs",
+        "libz-rs-sys"
+      ]
+    },
+    {
+      "repository": "quiche-fast",
+      "packages": [
+        "quiche",
+        "tokio-quiche",
+        "qlog",
+        "octets",
+        "h3i",
+        "qlog-dancer"
+      ]
+    },
+    {
+      "repository": "fast-socks5-fast",
+      "packages": [
+        "fast-socks5"
+      ]
+    },
+    {
+      "repository": "hayro",
+      "packages": [
+        "hayro",
+        "hayro-interpret",
+        "hayro-syntax",
+        "hayro-write",
+        "hayro-svg",
+        "hayro-jpeg2000",
+        "hayro-jbig2",
+        "hayro-ccitt",
+        "hayro-postscript",
+        "hayro-cmap",
+        "hayro-font"
+      ]
+    },
+    {
+      "repository": "oxc",
+      "packages": [
+        "oxc",
+        "oxc_allocator",
+        "oxc_ast",
+        "oxc_ast_visit",
+        "oxc_codegen",
+        "oxc_diagnostics",
+        "oxc_estree",
+        "oxc_minifier",
+        "oxc_parser",
+        "oxc_regular_expression",
+        "oxc_semantic",
+        "oxc_span",
+        "oxc_syntax",
+        "oxc_transformer",
+        "oxc_isolated_declarations",
+        "oxc_formatter",
+        "oxc_linter"
+      ]
+    },
+    {
+      "repository": "step-p21-fast",
+      "packages": [
+        "step-p11",
+        "step-p11-derive",
+        "step-p21",
+        "step-p21-derive"
+      ]
+    },
+    {
+      "repository": "yarugc-rs",
+      "packages": [
+        "xilem",
+        "xilem_core",
+        "xilem_masonry",
+        "masonry",
+        "masonry_core",
+        "masonry_imaging",
+        "masonry_testing",
+        "masonry_winit",
+        "xilem_web"
+      ]
+    },
+    {
+      "repository": "planetmap",
+      "packages": [
+        "planetmap"
+      ]
+    },
+    {
+      "repository": "waffle",
+      "packages": [
+        "waffle"
+      ]
+    },
+    {
+      "repository": "ngspice-rs-fast",
+      "packages": [
+        "ngspice-rs"
+      ]
+    },
+    {
+      "repository": "zipp-fast",
+      "packages": [
+        "zipp-vm",
+        "zipp-cli",
+        "zipp-gpu",
+        "zipp-pyparse",
+        "zipp-phpparse",
+        "zipp-rsparse",
+        "zipp-numparse",
+        "zipp-regress"
+      ]
+    }
+  ],
+  "capabilities": [
+    {
+      "name": "HTTP client",
+      "providers": [
+        "wreq",
+        "reqwest",
+        "ureq",
+        "surf",
+        "isahc"
+      ],
+      "preferred": "wreq from https://github.com/codeandsolder/wreq-exp",
+      "notes": "Check async/runtime, target, proxy, TLS and streaming requirements; consolidate independent HTTP clients where possible."
+    },
+    {
+      "name": "HTTP server framework",
+      "providers": [
+        "axum",
+        "actix-web",
+        "rocket",
+        "warp",
+        "tiny_http",
+        "rouille",
+        "iron",
+        "poem"
+      ],
+      "preferred": "axum",
+      "notes": "Hyper is a lower-level transport, not a competing framework."
+    },
+    {
+      "name": "async runtime",
+      "providers": [
+        "tokio",
+        "async-std",
+        "smol"
+      ],
+      "preferred": "tokio",
+      "notes": "Check platform and feature combinations; runtime adapters may be intentional."
+    },
+    {
+      "name": "JSON implementation",
+      "providers": [
+        "serde_json",
+        "simd-json",
+        "sonic-rs",
+        "json"
+      ],
+      "preferred": "one implementation selected by API and performance requirements",
+      "notes": "Confirm that parsing and serialization workloads can share an implementation."
+    },
+    {
+      "name": "TLS implementation",
+      "providers": [
+        "btls",
+        "boring",
+        "openssl",
+        "rustls",
+        "native-tls"
+      ],
+      "preferred": "btls from https://github.com/codeandsolder/btls-fast for compatible native TLS use",
+      "notes": "Platform-native TLS, certificate verification, pure Rust, or different protocol requirements may justify separate providers.",
+      "complementary_pairs": [
+        [
+          "native-tls",
+          "openssl"
+        ]
+      ]
+    },
+    {
+      "name": "QUIC transport",
+      "providers": [
+        "quiche",
+        "quinn",
+        "s2n-quic"
+      ],
+      "preferred": "quiche from https://github.com/codeandsolder/quiche-fast where protocol and runtime requirements fit",
+      "notes": "Check HTTP/3, runtime, platform and transport API requirements."
+    },
+    {
+      "name": "terminal color",
+      "providers": [
+        "colored",
+        "owo-colors",
+        "ansi_term",
+        "yansi"
+      ],
+      "preferred": "one color library",
+      "notes": "Consolidate direct color formatting; type interoperability may require an adapter."
+    },
+    {
+      "name": "DEFLATE implementation",
+      "providers": [
+        "zlib-rs",
+        "miniz_oxide",
+        "libdeflater",
+        "libz-sys",
+        "libz-ng-sys"
+      ],
+      "preferred": "zlib-rs from https://github.com/codeandsolder/zlib-rs-fast where streaming and format support fit",
+      "notes": "flate2 is a frontend and is not itself an additional provider; distinguish stream and whole-buffer workloads and C ABI requirements."
+    },
+    {
+      "name": "regular expression engine",
+      "providers": [
+        "regex",
+        "fancy-regex",
+        "pcre2",
+        "regress",
+        "onig"
+      ],
+      "preferred": "one engine that meets the required syntax and performance",
+      "notes": "Lookaround, backreferences, ECMAScript compatibility and Unicode semantics may require distinct engines.",
+      "complementary_pairs": [
+        [
+          "regex",
+          "fancy-regex"
+        ]
+      ]
+    },
+    {
+      "name": "argument parser",
+      "providers": [
+        "clap",
+        "argh",
+        "pico-args",
+        "lexopt",
+        "getopts",
+        "docopt"
+      ],
+      "preferred": "one parser",
+      "notes": "Check CLI API and platform requirements; parser combinators are distinct."
+    }
+  ],
+  "preferences": [
+    {
+      "packages": [
+        "reqwest",
+        "ureq",
+        "surf",
+        "isahc"
+      ],
+      "preferred": "wreq from https://github.com/codeandsolder/wreq-exp",
+      "notes": "Prefer our async HTTP client for native applications if its runtime, TLS, platform and feature support fits; migration is not API-compatible."
+    },
+    {
+      "packages": [
+        "boring",
+        "boring-sys",
+        "tokio-boring"
+      ],
+      "preferred": "corresponding btls, btls-sys or tokio-btls package from https://github.com/codeandsolder/btls-fast",
+      "notes": "Check BoringSSL binding and integration APIs; do not blindly substitute packages."
+    },
+    {
+      "packages": [
+        "ruststep",
+        "ruststep-derive"
+      ],
+      "preferred": "step-p21 family from https://github.com/codeandsolder/step-p21-fast",
+      "notes": "Check STEP parsing and entity API requirements."
+    },
+    {
+      "packages": [
+        "truck-modeling",
+        "truck-geometry",
+        "truck-meshalgo",
+        "truck-topology",
+        "truck-polymesh",
+        "truck-stepio"
+      ],
+      "preferred": "corresponding monstertruck crates from https://github.com/codeandsolder/monstertruck",
+      "notes": "CAD APIs have diverged; evaluate the corresponding implementation rather than assuming a drop-in replacement."
+    },
+    {
+      "packages": [
+        "rustls",
+        "native-tls"
+      ],
+      "preferred": "btls from https://github.com/codeandsolder/btls-fast where native BoringSSL TLS is suitable",
+      "notes": "Evaluate certificate verification, target availability, platform trust stores, pure-Rust requirements and transport APIs before migration."
+    }
+  ],
+  "feature_preferences": [
+    {
+      "package": "flate2",
+      "preferred_feature": "zlib-rs",
+      "competing_features": [
+        "rust_backend",
+        "miniz_oxide",
+        "zlib",
+        "zlib-ng",
+        "zlib-ng-compat"
+      ],
+      "preferred": "flate2 with the zlib-rs feature and a compatible codeandsolder/zlib-rs-fast Cargo patch",
+      "notes": "Keep the flate2 frontend when its API is useful; consolidate on the preferred DEFLATE backend if target and feature support permit. Verify the resolved zlib-rs source."
+    }
+  ]
+}
