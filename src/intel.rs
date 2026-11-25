@@ -79,7 +79,10 @@ pub struct IntelClient {
 }
 
 impl IntelClient {
-    /// Create a new IntelClient with crates.io API access and disk cache.
+    /// Create a new `IntelClient` with crates.io API access and disk cache.
+    ///
+    /// # Errors
+    /// Returns an error if the HTTP client cannot be constructed.
     pub fn new() -> Result<Self> {
         let http = wreq::Client::builder()
             .user_agent(USER_AGENT)
@@ -91,15 +94,14 @@ impl IntelClient {
             .map(|dirs| dirs.cache_dir().to_path_buf())
             .filter(|path| !path.as_os_str().is_empty());
 
-        if let Some(dir) = &cache_dir {
-            if let Err(err) = fs::create_dir_all(dir) {
-                eprintln!(
-                    "⚠️  Could not create cache directory at {}: {}. Continuing without cache.",
-                    dir.display(),
-                    err
-                );
-                cache_dir = None;
-            }
+        if let Some(dir) = &cache_dir
+            && let Err(err) = fs::create_dir_all(dir)
+        {
+            eprintln!(
+                "⚠️  Could not create cache directory at {}: {err}. Continuing without cache.",
+                dir.display()
+            );
+            cache_dir = None;
         }
 
         Ok(Self {
@@ -110,6 +112,9 @@ impl IntelClient {
     }
 
     /// Fetch live intel for a crate. Checks disk cache first (1hr TTL).
+    ///
+    /// # Errors
+    /// Returns an error for invalid crate names, failed requests, or invalid registry responses.
     pub async fn fetch_crate_intel(&self, name: &str) -> Result<CrateIntel> {
         anyhow::ensure!(
             !name.is_empty()
@@ -122,16 +127,14 @@ impl IntelClient {
         let cache_path = self
             .cache_dir
             .as_ref()
-            .map(|dir| dir.join(format!("{}.json", name)));
+            .map(|dir| dir.join(format!("{name}.json")));
 
-        if let Some(path) = &cache_path {
-            if let Ok(contents) = fs::read_to_string(path) {
-                if let Ok(entry) = serde_json::from_str::<CacheEntry<CrateIntel>>(&contents) {
-                    if entry.is_fresh() {
-                        return Ok(entry.data);
-                    }
-                }
-            }
+        if let Some(path) = &cache_path
+            && let Ok(contents) = fs::read_to_string(path)
+            && let Ok(entry) = serde_json::from_str::<CacheEntry<CrateIntel>>(&contents)
+            && entry.is_fresh()
+        {
+            return Ok(entry.data);
         }
 
         // Cache miss or stale — fetch from crates.io
@@ -147,7 +150,7 @@ impl IntelClient {
             .get(format!("https://crates.io/api/v1/crates/{name}"))
             .send()
             .await
-            .and_then(|r| r.error_for_status())
+            .and_then(wreq::Response::error_for_status)
             .with_context(|| format!("failed to fetch crate info for {name}"))?;
         let response: RegistryResponse = response
             .json()
@@ -158,8 +161,7 @@ impl IntelClient {
         let latest_version = response
             .versions
             .first()
-            .map(|v| v.num.clone())
-            .unwrap_or_else(|| crate_data.max_version.clone());
+            .map_or_else(|| crate_data.max_version.clone(), |v| v.num.clone());
 
         let intel = CrateIntel {
             name: name.to_string(),
@@ -213,13 +215,10 @@ impl IntelClient {
     pub async fn fetch_bulk_intel(&self, crate_names: &[&str]) -> HashMap<String, CrateIntel> {
         let mut intel = HashMap::new();
         for name in crate_names {
-            match self.fetch_crate_intel(name).await {
-                Ok(info) => {
-                    intel.insert(name.to_string(), info);
-                }
-                Err(_) => {
-                    // Non-fatal: skip this crate
-                }
+            if let Ok(info) = self.fetch_crate_intel(name).await {
+                intel.insert(name.to_string(), info);
+            } else {
+                // Non-fatal: skip this crate
             }
         }
         intel
@@ -260,8 +259,9 @@ struct GitHubRepoResponse {
 // ── Helpers ──────────────────────────────────────────────────────────
 
 /// Parse a GitHub URL into (owner, repo).
-/// Supports: https://github.com/owner/repo, https://github.com/owner/repo.git,
-/// https://github.com/owner/repo/tree/main, etc.
+/// Supports: <https://github.com/owner/repo>, <https://github.com/owner/repo.git>,
+/// <https://github.com/owner/repo/tree/main>, etc.
+#[must_use = "Returns the owner and repository parsed from the URL"]
 pub fn parse_github_url(url: &str) -> Option<(String, String)> {
     let url = url.trim().trim_end_matches('/');
 

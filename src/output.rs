@@ -2,9 +2,10 @@
 //! with colored output, emojis, and actionable links.
 
 use std::collections::HashMap;
+use std::hash::BuildHasher;
 use std::path::Path;
 
-use colored::*;
+use colored::Colorize;
 use serde::Serialize;
 
 use crate::code_audit::{CodeAuditReport, kind_label};
@@ -12,14 +13,14 @@ use crate::intel::CrateIntel;
 use crate::suggestions::{AutofixSafety, Confidence, Impact, MigrationRisk, SuggestionKind};
 use crate::suggestions::{EvidenceSource, Suggestion};
 
-fn print_suggestion_detail(suggestion: &Suggestion, intel: &HashMap<String, CrateIntel>) {
-    let icon = match suggestion.kind {
-        SuggestionKind::ModernAlternative => "•",
-        SuggestionKind::FeatureOptimization => "•",
-        SuggestionKind::StdReplacement => "•",
-        SuggestionKind::ComboWin => "•",
-        SuggestionKind::CapabilityOverlap => "•",
-        SuggestionKind::Unmaintained => "⚠️",
+fn print_suggestion_detail<S: BuildHasher>(
+    suggestion: &Suggestion,
+    intel: &HashMap<String, CrateIntel, S>,
+) {
+    let icon = if suggestion.kind == SuggestionKind::Unmaintained {
+        "⚠️"
+    } else {
+        "•"
     };
 
     let impact_tag = match suggestion.impact {
@@ -47,18 +48,12 @@ fn print_suggestion_detail(suggestion: &Suggestion, intel: &HashMap<String, Crat
     };
 
     println!(
-        " {} {} {} {} {}",
-        icon,
-        impact_tag,
+        " {icon} {impact_tag} {} {verb} {}",
         suggestion.current.yellow(),
-        verb,
         suggestion.recommended.green(),
     );
     println!(
-        "   {} {} {} {}",
-        confidence_tag,
-        risk_tag,
-        autofix_tag,
+        "   {confidence_tag} {risk_tag} {autofix_tag} {}",
         format!("evidence: {}", evidence_label(&suggestion.evidence_source)).dimmed()
     );
     println!("   {}", suggestion.reason.dimmed());
@@ -68,7 +63,9 @@ fn print_suggestion_detail(suggestion: &Suggestion, intel: &HashMap<String, Crat
         if let Some(info) = intel.get(crate_name) {
             let mut enrichment = format!("   latest: v{}", info.latest_version);
             if let Some(recent) = info.recent_downloads {
-                enrichment.push_str(&format!(", {} recent downloads", format_downloads(recent)));
+                enrichment.push_str(", ");
+                enrichment.push_str(&format_downloads(recent));
+                enrichment.push_str(" recent downloads");
             }
             println!("   {}", enrichment.dimmed());
         }
@@ -95,11 +92,11 @@ fn use_multi_headers(packages: &[PackageSuggestionView<'_>]) -> bool {
 }
 
 /// Single-root modernization report (`manifest_path` is only useful in grouped layouts).
-pub fn render_report(
+pub fn render_report<S: BuildHasher>(
     project_name: &str,
     version: &str,
     suggestions: &[Suggestion],
-    intel: &HashMap<String, CrateIntel>,
+    intel: &HashMap<String, CrateIntel, S>,
 ) {
     render_packages_modernization(
         &[PackageSuggestionView {
@@ -112,9 +109,9 @@ pub fn render_report(
     );
 }
 
-pub fn render_packages_modernization(
+pub fn render_packages_modernization<S: BuildHasher>(
     packages: &[PackageSuggestionView<'_>],
-    intel: &HashMap<String, CrateIntel>,
+    intel: &HashMap<String, CrateIntel, S>,
 ) {
     let all_empty = packages.iter().all(|p| p.suggestions.is_empty());
 
@@ -128,17 +125,7 @@ pub fn render_packages_modernization(
 
     let multi = use_multi_headers(packages);
 
-    if !multi {
-        let p = &packages[0];
-        println!(
-            "{}",
-            format!("🚀 Modernization report for {} v{}", p.name, p.version).bold()
-        );
-        println!();
-        for suggestion in p.suggestions {
-            print_suggestion_detail(suggestion, intel);
-        }
-    } else {
+    if multi {
         for p in packages {
             if p.suggestions.is_empty() {
                 continue;
@@ -159,6 +146,16 @@ pub fn render_packages_modernization(
             }
             println!();
         }
+    } else {
+        let p = &packages[0];
+        println!(
+            "{}",
+            format!("🚀 Modernization report for {} v{}", p.name, p.version).bold()
+        );
+        println!();
+        for suggestion in p.suggestions {
+            print_suggestion_detail(suggestion, intel);
+        }
     }
 
     let high_count = packages
@@ -171,15 +168,14 @@ pub fn render_packages_modernization(
     println!(
         "{}",
         format!(
-            "{} high-impact upgrade{} available. `--fix` only edits Cargo.toml (never Rust source). Run `cargo anoint --fix --dry-run` to preview.",
-            high_count,
+            "{high_count} high-impact upgrade{} available. `--fix` only edits Cargo.toml (never Rust source). Run `cargo anoint --fix --dry-run` to preview.",
             if high_count == 1 { "" } else { "s" }
         )
         .bold()
     );
 }
 
-fn suggestion_kind_slug(kind: &SuggestionKind) -> &'static str {
+const fn suggestion_kind_slug(kind: &SuggestionKind) -> &'static str {
     match kind {
         SuggestionKind::ModernAlternative => "modern_alternative",
         SuggestionKind::FeatureOptimization => "feature_opt",
@@ -192,22 +188,20 @@ fn suggestion_kind_slug(kind: &SuggestionKind) -> &'static str {
 
 /// Paste-friendly condensed output (`--summary`).
 pub fn render_summary(scan_stats: &[(&str, usize, usize)], suggestions: &[Suggestion]) {
+    const MAX: usize = 14;
     let pkg_ct = scan_stats.len();
     println!(
         "{}",
         format!(
-            "📊 Summary — scanned {} workspace member{}",
-            pkg_ct,
+            "📊 Summary — scanned {pkg_ct} workspace member{}",
             if pkg_ct == 1 { "" } else { "s" }
         )
         .bold()
     );
     for (name, direct_ct, total_ct) in scan_stats {
         println!(
-            "   • {} — {} direct deps, {} total in resolve",
-            name.bold(),
-            direct_ct,
-            total_ct
+            "   • {} — {direct_ct} direct deps, {total_ct} total in resolve",
+            name.bold()
         );
     }
 
@@ -253,9 +247,8 @@ pub fn render_summary(scan_stats: &[(&str, usize, usize)], suggestions: &[Sugges
         .collect();
     patterns.sort();
     patterns.dedup();
-    const MAX: usize = 14usize;
     for line in patterns.iter().take(MAX) {
-        println!("   • {}", line);
+        println!("   • {line}");
     }
     if patterns.len() > MAX {
         println!("   … and {} more", patterns.len() - MAX);
@@ -269,7 +262,7 @@ pub fn render_summary(scan_stats: &[(&str, usize, usize)], suggestions: &[Sugges
     );
 }
 
-fn evidence_label(source: &EvidenceSource) -> &'static str {
+const fn evidence_label(source: &EvidenceSource) -> &'static str {
     match source {
         EvidenceSource::BlessedRs => "blessed.rs",
         EvidenceSource::RustSec => "RustSec",
@@ -362,12 +355,18 @@ pub fn render_code_audit_report(report: &CodeAuditReport, verbose: bool) {
 /// Format download counts in a human-readable way (e.g., "1.2M", "456K").
 fn format_downloads(count: u64) -> String {
     if count >= 1_000_000 {
-        format!("{:.1}M", count as f64 / 1_000_000.0)
+        format_scaled_count(count, 1_000_000, "M")
     } else if count >= 1_000 {
-        format!("{:.1}K", count as f64 / 1_000.0)
+        format_scaled_count(count, 1_000, "K")
     } else {
         count.to_string()
     }
+}
+
+fn format_scaled_count(count: u64, scale: u64, suffix: &str) -> String {
+    let whole = count / scale;
+    let tenth = ((count % scale) * 10 + scale / 2) / scale;
+    format!("{}.{}{suffix}", whole + tenth / 10, tenth % 10)
 }
 
 #[cfg(test)]
@@ -420,7 +419,7 @@ pub fn render_advisories(advisories: &[crate::advisories::CrateAdvisories]) {
             format!("({count} advisory{})", if count == 1 { "" } else { "ies" }).dimmed()
         );
         for adv in &hit.advisories {
-            let cve_tag = adv.cve().map(|c| format!(" · {c}")).unwrap_or_default();
+            let cve_tag = adv.cve().map_or_default(|c| format!(" · {c}"));
             println!(
                 "     {} {}{}",
                 adv.id.red().bold(),
@@ -436,10 +435,10 @@ pub fn render_advisories(advisories: &[crate::advisories::CrateAdvisories]) {
     );
 }
 
-pub fn render_unified_json(report: JsonReportUnified<'_>) {
-    match serde_json::to_string_pretty(&report) {
-        Ok(json) => println!("{}", json),
-        Err(e) => eprintln!("cargo-anoint: failed to serialize JSON output: {}", e),
+pub fn render_unified_json(report: &JsonReportUnified<'_>) {
+    match serde_json::to_string_pretty(report) {
+        Ok(json) => println!("{json}"),
+        Err(e) => eprintln!("cargo-anoint: failed to serialize JSON output: {e}"),
     }
 }
 
@@ -457,8 +456,8 @@ pub fn render_json_report(suggestions: &[Suggestion], code_audit: Option<&CodeAu
         code_audit,
     };
     match serde_json::to_string_pretty(&report) {
-        Ok(json) => println!("{}", json),
-        Err(e) => eprintln!("cargo-anoint: failed to serialize JSON output: {}", e),
+        Ok(json) => println!("{json}"),
+        Err(e) => eprintln!("cargo-anoint: failed to serialize JSON output: {e}"),
     }
 }
 
@@ -466,8 +465,8 @@ pub fn render_json_report(suggestions: &[Suggestion], code_audit: Option<&CodeAu
 /// Kept for library callers that rely on the old narrow JSON shape.
 pub fn render_json(suggestions: &[Suggestion]) {
     match serde_json::to_string_pretty(suggestions) {
-        Ok(json) => println!("{}", json),
-        Err(e) => eprintln!("cargo-anoint: failed to serialize JSON output: {}", e),
+        Ok(json) => println!("{json}"),
+        Err(e) => eprintln!("cargo-anoint: failed to serialize JSON output: {e}"),
     }
 }
 
@@ -573,12 +572,8 @@ pub fn render_sarif(report: &CodeAuditReport) {
         .alerts
         .iter()
         .map(|a| {
-            let uri = a
-                .file
-                .to_string_lossy()
-                .strip_prefix("./")
-                .unwrap_or(a.file.to_string_lossy().as_ref())
-                .to_string();
+            let file = a.file.to_string_lossy();
+            let uri = file.strip_prefix("./").unwrap_or(&file).to_string();
             SarifResult {
                 rule_id: format!("{:?}", a.kind),
                 level: "warning",

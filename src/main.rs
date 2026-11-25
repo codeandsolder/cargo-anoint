@@ -228,7 +228,7 @@ async fn run_anoint_command(opts: cli::AnointOpts) -> Result<()> {
             hardcoded_values: None,
             security_advisories: advisories_for_json,
         };
-        cargo_anoint::output::render_unified_json(report);
+        cargo_anoint::output::render_unified_json(&report);
         maybe_fail_on_exit(
             &all_suggestions,
             &fail_levels,
@@ -536,7 +536,8 @@ fn run_feedback_command(opts: cli::AnointOpts) -> Result<()> {
         deps.len(),
         &suggestions,
         &report,
-    )
+    );
+    Ok(())
 }
 
 fn run_code_audit_command(opts: cli::CodeAuditOpts) -> Result<()> {
@@ -573,7 +574,7 @@ fn run_code_audit_command(opts: cli::CodeAuditOpts) -> Result<()> {
             hardcoded_values: if opts.hardcoded { Some(&bs_hits) } else { None },
             security_advisories: Vec::new(),
         };
-        cargo_anoint::output::render_unified_json(unified);
+        cargo_anoint::output::render_unified_json(&unified);
     } else {
         println!("🙏 cargo-anoint v{}", env!("CARGO_PKG_VERSION"));
         cargo_anoint::output::render_code_audit_report(&report, opts.verbose);

@@ -8,7 +8,6 @@ use regex::Regex;
 
 use crate::code_audit::{BullshitAlert, CodeAuditReport};
 use crate::suggestions::{Impact, Suggestion};
-use anyhow::Result;
 
 const HOTSPOT_LIMIT: usize = 5;
 
@@ -19,15 +18,14 @@ pub fn emit_feedback_stdout(
     total_deps: usize,
     suggestions: &[Suggestion],
     code_audit: &CodeAuditReport,
-) -> Result<()> {
+) {
     let high_impact = suggestions
         .iter()
         .filter(|s| matches!(s.impact, Impact::High))
         .count();
     let project_root = manifest
         .and_then(Path::parent)
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
+        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
 
     let hotspots = top_hotspots(code_audit, &project_root, HOTSPOT_LIMIT);
 
@@ -47,17 +45,14 @@ pub fn emit_feedback_stdout(
             println!("  - {shown}");
         }
     }
-
-    Ok(())
 }
 
 fn hotspot_key(alert: &BullshitAlert, project_root: &Path) -> String {
     let rel = display_path_under_root(&alert.file, project_root);
-    if let Some(name) = extract_rust_fn_name(&alert.context_snippet) {
-        format!("{}::{}", rel, name)
-    } else {
-        format!("{}:{}", rel, alert.line)
-    }
+    extract_rust_fn_name(&alert.context_snippet).map_or_else(
+        || format!("{rel}:{}", alert.line),
+        |name| format!("{rel}::{name}"),
+    )
 }
 
 fn display_path_under_root(path: &Path, project_root: &Path) -> String {
@@ -65,13 +60,9 @@ fn display_path_under_root(path: &Path, project_root: &Path) -> String {
         return normalize_path_sep(stripped);
     }
     match (path.canonicalize(), project_root.canonicalize()) {
-        (Ok(pa), Ok(pr)) => {
-            if let Ok(stripped) = pa.strip_prefix(&pr) {
-                normalize_path_sep(stripped)
-            } else {
-                normalize_path_sep(path)
-            }
-        }
+        (Ok(pa), Ok(pr)) => pa
+            .strip_prefix(&pr)
+            .map_or_else(|_| normalize_path_sep(path), normalize_path_sep),
         _ => normalize_path_sep(path),
     }
 }

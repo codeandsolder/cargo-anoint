@@ -93,10 +93,7 @@ fn finding(
     }
 }
 
-pub(crate) fn analyze(
-    deps: &[ResolvedDep],
-    package: Option<&str>,
-) -> serde_json::Result<Vec<Suggestion>> {
+pub fn analyze(deps: &[ResolvedDep], package: Option<&str>) -> serde_json::Result<Vec<Suggestion>> {
     let policy: Policy = serde_json::from_str(include_str!("../data/organization.json"))?;
     let direct: Vec<_> = deps.iter().filter(|dep| dep.is_direct).collect();
     let names: BTreeSet<&str> = direct.iter().map(|dep| dep.name.as_str()).collect();
@@ -162,7 +159,17 @@ pub(crate) fn analyze(
         }
     }
 
-    for capability in &policy.capabilities {
+    append_overlap_findings(&policy.capabilities, &direct, package, &mut results);
+    Ok(results)
+}
+
+fn append_overlap_findings(
+    capabilities: &[Capability],
+    direct: &[&ResolvedDep],
+    package: Option<&str>,
+    results: &mut Vec<Suggestion>,
+) {
+    for capability in capabilities {
         let mut reported = BTreeSet::new();
         for kind in [
             cargo_metadata::DependencyKind::Normal,
@@ -204,7 +211,6 @@ pub(crate) fn analyze(
             }
         }
     }
-    Ok(results)
 }
 
 #[cfg(test)]

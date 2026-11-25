@@ -1,7 +1,7 @@
 //! Security advisory integration via the osv.dev batch API.
 //!
 //! Checks all direct dependencies against the OSV database (which includes
-//! RustSec advisories) in a single HTTP call. Non-fatal: all errors return
+//! `RustSec` advisories) in a single HTTP call. Non-fatal: all errors return
 //! an empty result so the main analysis always completes.
 
 use std::time::Duration;
@@ -132,30 +132,27 @@ async fn fetch_advisories(queries: Vec<OsvPackageQuery>) -> Vec<CrateAdvisories>
         return Vec::new();
     }
 
-    let client = match wreq::Client::builder()
+    let Ok(client) = wreq::Client::builder()
         .user_agent(USER_AGENT)
         .timeout(Duration::from_secs(10))
         .build()
-    {
-        Ok(c) => c,
-        Err(_) => return Vec::new(),
+    else {
+        return Vec::new();
     };
 
     let request = OsvBatchRequest { queries };
 
-    let response = match client
+    let Ok(response) = client
         .post(OSV_BATCH_URL)
         .json(&request)
         .send()
         .await
-        .and_then(|r| r.error_for_status())
-    {
-        Ok(response) => response,
-        Err(_) => return Vec::new(),
+        .and_then(wreq::Response::error_for_status)
+    else {
+        return Vec::new();
     };
-    let batch: OsvBatchResponse = match response.json().await {
-        Ok(b) => b,
-        Err(_) => return Vec::new(),
+    let Ok(batch) = response.json::<OsvBatchResponse>().await else {
+        return Vec::new();
     };
 
     request

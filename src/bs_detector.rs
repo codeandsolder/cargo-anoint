@@ -11,6 +11,7 @@
 use std::fs;
 use std::path::Path;
 
+use colored::Colorize;
 use serde::{Deserialize, Serialize};
 
 /// A detected hardcoded value.
@@ -31,7 +32,7 @@ pub struct BSHit {
 }
 
 /// Categories of hardcoded bullshit.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum BSCategory {
     MagicNumber,
     HardcodedUrl,
@@ -45,13 +46,13 @@ pub enum BSCategory {
 impl std::fmt::Display for BSCategory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BSCategory::MagicNumber => write!(f, "magic-number"),
-            BSCategory::HardcodedUrl => write!(f, "hardcoded-url"),
-            BSCategory::ApiKeyOrToken => write!(f, "api-key-or-token"),
-            BSCategory::FilePath => write!(f, "file-path"),
-            BSCategory::IpAddress => write!(f, "ip-address"),
-            BSCategory::HardcodedCredential => write!(f, "hardcoded-credential"),
-            BSCategory::HardcodedTimeout => write!(f, "hardcoded-timeout"),
+            Self::MagicNumber => write!(f, "magic-number"),
+            Self::HardcodedUrl => write!(f, "hardcoded-url"),
+            Self::ApiKeyOrToken => write!(f, "api-key-or-token"),
+            Self::FilePath => write!(f, "file-path"),
+            Self::IpAddress => write!(f, "ip-address"),
+            Self::HardcodedCredential => write!(f, "hardcoded-credential"),
+            Self::HardcodedTimeout => write!(f, "hardcoded-timeout"),
         }
     }
 }
@@ -89,6 +90,9 @@ impl Patterns {
 }
 
 /// Scan a directory tree for hardcoded bullshit values.
+///
+/// # Errors
+/// Returns an error if a built-in regular expression cannot be compiled.
 pub fn scan_dir(root: &Path) -> Result<Vec<BSHit>, regex::Error> {
     let patterns = Patterns::new()?;
     let mut hits = Vec::new();
@@ -98,9 +102,8 @@ pub fn scan_dir(root: &Path) -> Result<Vec<BSHit>, regex::Error> {
 }
 
 fn scan_path(dir: &Path, hits: &mut Vec<BSHit>, patterns: &Patterns) {
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
     };
 
     for entry in entries.flatten() {
@@ -108,17 +111,17 @@ fn scan_path(dir: &Path, hits: &mut Vec<BSHit>, patterns: &Patterns) {
         if path.is_dir() {
             // Skip common non-source directories
             let skip = ["target", ".git", "node_modules", ".cargo"];
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if skip.contains(&name) {
-                    continue;
-                }
+            if let Some(name) = path.file_name().and_then(|n| n.to_str())
+                && skip.contains(&name)
+            {
+                continue;
             }
             scan_path(&path, hits, patterns);
-        } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
-            if let Ok(content) = fs::read_to_string(&path) {
-                for (i, line) in content.lines().enumerate() {
-                    check_line(&path, i + 1, line, hits, patterns);
-                }
+        } else if path.extension().and_then(|e| e.to_str()) == Some("rs")
+            && let Ok(content) = fs::read_to_string(&path)
+        {
+            for (i, line) in content.lines().enumerate() {
+                check_line(&path, i + 1, line, hits, patterns);
             }
         }
     }
@@ -377,7 +380,7 @@ fn detect_hardcoded_timeouts(
             line: line_num,
             line_text: line.to_string(),
             category: BSCategory::HardcodedTimeout,
-            value: format!("{} {}", value, cap.get(3).map(|m| m.as_str()).unwrap_or("")),
+            value: format!("{value} {}", cap.get(3).map_or("", |m| m.as_str())),
             suggestion: "Make timeouts configurable via environment variables or config files"
                 .to_string(),
         });
@@ -390,8 +393,6 @@ pub fn render_bs_hits(hits: &[BSHit]) {
         println!("{}", "✅ No hardcoded bullshit detected!".green());
         return;
     }
-
-    use colored::*;
 
     println!(
         "{}",
@@ -413,8 +414,7 @@ pub fn render_bs_hits(hits: &[BSHit]) {
         };
 
         println!(
-            "  {} {}:{} → {}",
-            cat_tag,
+            "  {cat_tag} {}:{} → {}",
             hit.file.dimmed(),
             hit.line.to_string().dimmed(),
             hit.value.yellow()
@@ -430,12 +430,9 @@ pub fn render_bs_hits(hits: &[BSHit]) {
     if cred_count > 0 {
         println!(
             "{}",
-            format!(
-                "⚠️  {} hardcoded credential(s) found — this is a security risk!",
-                cred_count
-            )
-            .red()
-            .bold()
+            format!("⚠️  {cred_count} hardcoded credential(s) found — this is a security risk!")
+                .red()
+                .bold()
         );
     }
 }

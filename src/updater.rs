@@ -2,7 +2,7 @@
 //! and converts them into cargo-anoint suggestion rules.
 //!
 //! blessed.rs publishes structured data at:
-//! https://raw.githubusercontent.com/nicoburns/blessed-rs/main/data/crates.json
+//! <https://raw.githubusercontent.com/nicoburns/blessed-rs/main/data/crates.json>
 
 use std::fs;
 use std::path::PathBuf;
@@ -73,6 +73,9 @@ impl CachedRules {
 // ── Public API ───────────────────────────────────────────────────────
 
 /// Force-fetch the latest blessed.rs data and update the cached rules.
+///
+/// # Errors
+/// Returns an error if the upstream rules cannot be downloaded, decoded, or saved.
 pub async fn update_rules() -> Result<Vec<Rule>> {
     println!("📡 Fetching latest blessed.rs recommendations...");
 
@@ -121,6 +124,7 @@ pub async fn update_rules() -> Result<Vec<Rule>> {
 }
 
 /// Load cached blessed.rs rules if they exist and are fresh.
+#[must_use = "Returns the cached rules if they are available"]
 pub fn load_cached_rules() -> Option<Vec<Rule>> {
     let cache_path = get_cache_path()?;
     let contents = fs::read_to_string(&cache_path).ok()?;
@@ -214,8 +218,6 @@ fn convert_to_rules(data: &BlessedData) -> Vec<Rule> {
 /// crossbeam-channel" but should not flip direction; color-eyre says anyhow is
 /// "**simpler**" for other use cases but is not deprecating color-eyre).
 fn has_migration_signal(purpose_notes: &str, alt_notes: &str) -> bool {
-    let combined = format!("{purpose_notes} {alt_notes}").to_lowercase();
-
     const CORE: &[&str] = &[
         "unmaintained",
         "deprecated",
@@ -236,6 +238,7 @@ fn has_migration_signal(purpose_notes: &str, alt_notes: &str) -> bool {
         "not recommended",
     ];
 
+    let combined = format!("{purpose_notes} {alt_notes}").to_lowercase();
     if CORE.iter().any(|s| combined.contains(s)) {
         return true;
     }
@@ -260,7 +263,7 @@ fn has_migration_signal(purpose_notes: &str, alt_notes: &str) -> bool {
 fn infer_kind(purpose_notes: &str, alt_notes: &str) -> crate::suggestions::SuggestionKind {
     use crate::suggestions::SuggestionKind;
 
-    let combined = format!("{} {}", purpose_notes, alt_notes).to_lowercase();
+    let combined = format!("{purpose_notes} {alt_notes}").to_lowercase();
 
     if combined.contains("standard library") || combined.contains("included in std") {
         SuggestionKind::StdReplacement
@@ -290,10 +293,7 @@ fn build_reason(purpose_notes: &str, alt_notes: &str, purpose_name: &str) -> Str
     let clean = note.trim();
 
     if clean.is_empty() {
-        format!(
-            "blessed.rs recommends a different crate for: {}",
-            purpose_name
-        )
+        format!("blessed.rs recommends a different crate for: {purpose_name}")
     } else if clean.len() > 120 {
         format!("{}...", &clean[..117])
     } else {

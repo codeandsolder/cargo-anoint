@@ -46,7 +46,7 @@ pub struct OverlapException {
 /// A custom rule from anoint.toml.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolicyRule {
-    /// Crate name or combo pattern (e.g., "reqwest+serde_json").
+    /// Crate name or combo pattern (e.g., "`reqwest+serde_json`").
     pub pattern: String,
 
     /// Recommended replacement.
@@ -55,7 +55,7 @@ pub struct PolicyRule {
     /// Reason for the suggestion.
     pub reason: String,
 
-    /// Kind of suggestion. Defaults to "modern_alternative" if omitted.
+    /// Kind of suggestion. Defaults to "`modern_alternative`" if omitted.
     #[serde(default = "default_rule_kind")]
     pub kind: String,
 
@@ -97,7 +97,7 @@ pub struct PolicySettings {
 
     /// Reserved confidence threshold for future machine-assisted suggestions.
     #[serde(default)]
-    pub min_confidence: f64,
+    pub min_confidence: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -106,7 +106,7 @@ pub struct CodeAuditPolicy {
     #[serde(default)]
     pub ignore_paths: Vec<String>,
 
-    /// Suppress findings with these kind names, e.g. "UnwrapAbuse".
+    /// Suppress findings with these kind names, e.g. "`UnwrapAbuse`".
     #[serde(default)]
     pub ignore_kinds: Vec<String>,
 
@@ -117,12 +117,16 @@ pub struct CodeAuditPolicy {
 
 /// Load policy from a anoint.toml file at the given path.
 /// Returns None if the file does not exist or cannot be parsed.
+#[must_use = "Returns the policy if it could be read"]
 pub fn load_policy(path: &Path) -> Option<Policy> {
     try_load_policy(path).ok()
 }
 
 /// Load policy from a anoint.toml file at the given path.
 /// Returns an error if the file is missing, unreadable, or invalid.
+///
+/// # Errors
+/// Returns an error for missing or unreadable files, invalid TOML, or invalid overlap exceptions.
 pub fn try_load_policy(path: &Path) -> anyhow::Result<Policy> {
     let content = fs::read_to_string(path)
         .map_err(|err| anyhow::anyhow!("failed to read policy {}: {err}", path.display()))?;
@@ -152,6 +156,7 @@ pub fn try_load_policy(path: &Path) -> anyhow::Result<Policy> {
 /// Filter suggestions based on policy rules.
 /// - Removes suggestions for ignored packages.
 /// - Applies per-package suppress/pin overrides.
+#[must_use = "Returns the filtered findings"]
 pub fn apply_policy(
     suggestions: Vec<crate::suggestions::Suggestion>,
     policy: &Policy,
@@ -176,11 +181,11 @@ pub fn apply_policy(
             }
 
             // Check per-package suppress
-            for pkg_name in s.current.split('+').map(|n| n.trim()) {
-                if let Some(pkg_policy) = policy.packages.get(pkg_name) {
-                    if pkg_policy.suppress {
-                        return false;
-                    }
+            for pkg_name in s.current.split('+').map(str::trim) {
+                if let Some(pkg_policy) = policy.packages.get(pkg_name)
+                    && pkg_policy.suppress
+                {
+                    return false;
                 }
             }
 
