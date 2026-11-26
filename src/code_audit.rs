@@ -345,7 +345,7 @@ fn source_files(
             });
             if !config.include_tests && test_only {
                 package_files.remove(path);
-            } else if !is_ignored_path(path, config) {
+            } else if !is_ignored_path(path.strip_prefix(root).unwrap_or(path), config) {
                 included_targets.insert(path.to_path_buf());
             }
         }
@@ -362,28 +362,33 @@ fn collect_rust_files(
     config: &CodeAuditConfig,
     files: &mut BTreeSet<PathBuf>,
 ) -> Result<()> {
-    for entry in fs::read_dir(dir).with_context(|| format!("failed to read {}", dir.display()))? {
-        let entry = entry?;
-        let path = entry.path();
-        if is_ignored_path(&path, config) {
-            continue;
-        }
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        let file_type = entry.file_type()?;
-        if file_type.is_dir() {
-            if should_skip_dir(&name)
-                || target_dir == Some(path.as_path())
-                || (!config.include_tests
-                    && dir == root
-                    && matches!(name.as_ref(), "tests" | "examples" | "benches"))
-                || (target_dir.is_some() && path.join("Cargo.toml").try_exists()?)
-            {
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(&directory)
+            .with_context(|| format!("failed to read {}", directory.display()))?
+        {
+            let entry = entry?;
+            let path = entry.path();
+            if is_ignored_path(path.strip_prefix(root).unwrap_or(&path), config) {
                 continue;
             }
-            collect_rust_files(root, &path, target_dir, config, files)?;
-        } else if file_type.is_file() && path.extension().is_some_and(|ext| ext == "rs") {
-            files.insert(path);
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            let file_type = entry.file_type()?;
+            if file_type.is_dir() {
+                if should_skip_dir(&name)
+                    || target_dir == Some(path.as_path())
+                    || (!config.include_tests
+                        && directory == root
+                        && matches!(name.as_ref(), "tests" | "examples" | "benches"))
+                    || (target_dir.is_some() && path.join("Cargo.toml").try_exists()?)
+                {
+                    continue;
+                }
+                pending.push(path);
+            } else if file_type.is_file() && path.extension().is_some_and(|ext| ext == "rs") {
+                files.insert(path);
+            }
         }
     }
     Ok(())
@@ -1017,6 +1022,24 @@ pub const fn other(x: u32) {
             .map(|finding| finding.line)
             .collect();
         assert_eq!(lines, vec![4]);
+        Ok(())
+    }
+
+    #[test]
+    fn ignored_paths_do_not_match_unrelated_parent_directories() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let root = tmp.path().join("generated");
+        fs::create_dir_all(root.join("generated"))?;
+        fs::write(root.join("lib.rs"), "fn f() { value().unwrap(); }")?;
+        fs::write(
+            root.join("generated/skip.rs"),
+            "fn f() { value().unwrap(); }",
+        )?;
+        let mut files = BTreeSet::new();
+        let mut cfg = config();
+        cfg.ignore_paths.push("generated".to_owned());
+        collect_rust_files(&root, &root, None, &cfg, &mut files)?;
+        assert_eq!(files, BTreeSet::from([root.join("lib.rs")]));
         Ok(())
     }
 

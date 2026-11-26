@@ -76,7 +76,7 @@ pub struct PolicySettings {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct CodeAuditPolicy {
-    /// Suppress findings in paths containing any of these strings.
+    /// Suppress findings in package-relative paths containing any of these strings.
     #[serde(default)]
     pub ignore_paths: Vec<String>,
 
@@ -105,6 +105,14 @@ pub fn try_load_policy(path: &Path) -> anyhow::Result<Policy> {
             .min_confidence
             .is_none_or(|value| (0.0..=1.0).contains(&value)),
         "min_confidence must be between 0 and 1"
+    );
+    anyhow::ensure!(
+        policy
+            .code_audit
+            .ignore_paths
+            .iter()
+            .all(|pattern| !pattern.trim().is_empty()),
+        "code_audit.ignore_paths must not contain empty patterns"
     );
     for entry in &policy.allow_overlap {
         if entry.package.trim().is_empty()
