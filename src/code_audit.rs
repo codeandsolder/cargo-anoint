@@ -894,7 +894,7 @@ fn dedupe_alerts(alerts: &mut Vec<BullshitAlert>) {
 }
 
 #[must_use = "Returns the display label for the finding"]
-pub fn kind_label(kind: BullshitKind) -> &'static str {
+pub const fn kind_label(kind: BullshitKind) -> &'static str {
     kind.label()
 }
 
