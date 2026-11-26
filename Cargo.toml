@@ -45,6 +45,7 @@ regex = "1"
 url = "2.5"
 tree-sitter = "0.25"
 tree-sitter-rust = "0.24"
+syn = { version = "3", default-features = false, features = ["full", "parsing"] }
 
 # Terminal output
 colored = "2"

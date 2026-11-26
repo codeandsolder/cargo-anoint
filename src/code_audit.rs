@@ -152,29 +152,21 @@ pub fn scan_project_with_options(
     config: &CodeAuditConfig,
     options: AuditOptions,
 ) -> Result<ProjectAudit> {
+    let mut hardcoded_values = options.hardcoded.then(Vec::new);
+    let mut files = source_files(manifest_path, config)?;
     let diff_filter = if options.diff_only {
         let base_dir = source_root(manifest_path)?;
-        Some(DiffFilter::from_git_diff(&base_dir)?)
+        Some(DiffFilter::from_git_diff(&base_dir, &files)?)
     } else {
         None
     };
-    let mut hardcoded_values = options.hardcoded.then(Vec::new);
-    let mut files = source_files(manifest_path, config)?;
     if let Some(filter) = &diff_filter {
         files.retain(|file| filter.contains_file(file));
     }
 
     let mut alerts = Vec::new();
     for file in &files {
-        let size = fs::metadata(file)?.len();
-        anyhow::ensure!(
-            size <= config.max_file_bytes,
-            "Rust source {} is {size} bytes, exceeding the audit limit of {} bytes; exclude it explicitly if intended",
-            file.display(),
-            config.max_file_bytes
-        );
-        let code = fs::read_to_string(file)
-            .with_context(|| format!("failed to read {}", file.display()))?;
+        let code = read_source(file, config)?;
         let mut masks = parse_ignored_ranges(
             &code,
             config.include_tests,
@@ -277,6 +269,17 @@ pub fn config_from_policy(policy: Option<&crate::policy::Policy>) -> CodeAuditCo
     config
 }
 
+pub(crate) fn read_source(file: &Path, config: &CodeAuditConfig) -> Result<String> {
+    let size = fs::metadata(file)?.len();
+    anyhow::ensure!(
+        size <= config.max_file_bytes,
+        "Rust source {} is {size} bytes, exceeding the audit limit of {} bytes; exclude it explicitly if intended",
+        file.display(),
+        config.max_file_bytes
+    );
+    fs::read_to_string(file).with_context(|| format!("failed to read {}", file.display()))
+}
+
 fn project_base_dir(manifest_path: Option<&Path>) -> &Path {
     manifest_path
         .and_then(Path::parent)
@@ -306,7 +309,7 @@ pub fn source_root(manifest_path: Option<&Path>) -> Result<PathBuf> {
     Ok(base)
 }
 
-fn is_ignored_path(path: &Path, config: &CodeAuditConfig) -> bool {
+pub(crate) fn is_ignored_path(path: &Path, config: &CodeAuditConfig) -> bool {
     let path = path.to_string_lossy();
     config
         .ignore_paths
@@ -371,7 +374,7 @@ fn source_files(
                 included_targets.insert(path.to_path_buf());
             }
         }
-        package_files.extend(included_targets);
+        crate::module_discovery::discover(included_targets, root, config, &mut package_files)?;
         files.extend(package_files);
     }
     Ok(files)
@@ -431,7 +434,7 @@ struct DiffFilter {
 }
 
 impl DiffFilter {
-    fn from_git_diff(base_dir: &Path) -> Result<Self> {
+    fn from_git_diff(base_dir: &Path, files: &BTreeSet<PathBuf>) -> Result<Self> {
         let names = git_diff(base_dir, &["--name-only", "-z"], None)?;
         let mut changed_lines = HashMap::new();
         for name in names
@@ -440,7 +443,7 @@ impl DiffFilter {
         {
             let path =
                 PathBuf::from(std::str::from_utf8(name).context("Git diff path is not UTF-8")?);
-            if path.extension().is_none_or(|ext| ext != "rs") {
+            if !files.contains(&base_dir.join(&path)) {
                 continue;
             }
             let diff_bytes = git_diff(
@@ -547,15 +550,20 @@ struct FunctionComplexity {
     score: usize,
 }
 
+pub(crate) fn rust_parser() -> Result<Parser> {
+    let mut parser = Parser::new();
+    parser
+        .set_language(&tree_sitter_rust::LANGUAGE.into())
+        .map_err(|err| anyhow::anyhow!("failed to load Rust tree-sitter grammar: {err}"))?;
+    Ok(parser)
+}
+
 fn parse_ignored_ranges(
     code: &str,
     include_tests: bool,
     hardcoded_path: Option<&Path>,
 ) -> Result<SourceMasks> {
-    let mut parser = Parser::new();
-    parser
-        .set_language(&tree_sitter_rust::LANGUAGE.into())
-        .map_err(|err| anyhow::anyhow!("failed to load Rust tree-sitter grammar: {err}"))?;
+    let mut parser = rust_parser()?;
     let tree = parser
         .parse(code, None)
         .ok_or_else(|| anyhow::anyhow!("tree-sitter failed to parse Rust source"))?;
@@ -679,7 +687,7 @@ fn method_name<'a>(node: Node<'_>, code: &'a [u8]) -> Option<&'a str> {
         .and_then(|field| field.utf8_text(code).ok())
 }
 
-fn is_test_attr(node: Node<'_>, code: &[u8]) -> bool {
+pub(crate) fn is_test_attr(node: Node<'_>, code: &[u8]) -> bool {
     node.utf8_text(code).is_ok_and(|text| {
         let t: String = text.chars().filter(|c| !c.is_whitespace()).collect();
         matches!(t.as_str(), "#[test]" | "#[cfg(test)]")
@@ -1210,6 +1218,75 @@ path = "custom/check.rs"
             },
         )?;
         assert_eq!(report.files_scanned, 5);
+        Ok(())
+    }
+
+    #[test]
+    fn external_modules_follow_rust_paths_and_test_exclusions() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let root = tmp.path().canonicalize()?;
+        let package = root.join("package");
+        let external = root.join("external");
+        fs::create_dir_all(package.join("src"))?;
+        fs::create_dir_all(external.join("plain/inline"))?;
+        fs::create_dir_all(external.join("custom"))?;
+        let manifest = package.join("Cargo.toml");
+        fs::write(
+            &manifest,
+            "[package]\nname = \"external-modules\"\nversion = \"0.1.0\"\n[lib]\npath = \"../external/root.rs\"\n",
+        )?;
+        fs::write(
+            external.join("root.rs"),
+            r##"
+mod plain;
+#[path = r#"custom/selected.inc"#]
+mod selected;
+#[cfg_attr(feature = "alternate", path = "alternate.rs")]
+mod choice;
+#[cfg(test)]
+mod tests;
+"##,
+        )?;
+        fs::write(
+            external.join("plain.rs"),
+            r#"
+mod inline {
+    #[path = "nested.rs"]
+    mod nested;
+}
+"#,
+        )?;
+        fs::write(external.join("custom/selected.inc"), "mod sibling;")?;
+        for name in [
+            "plain/inline/nested.rs",
+            "custom/sibling.rs",
+            "choice.rs",
+            "alternate.rs",
+            "tests.rs",
+            "unrelated.rs",
+        ] {
+            fs::write(external.join(name), "fn f() { value().unwrap(); }")?;
+        }
+        let files = source_files(Some(&manifest), &config())?;
+        let relative: BTreeSet<_> = files
+            .iter()
+            .map(|path| path.strip_prefix(&external).map(Path::to_path_buf))
+            .collect::<std::result::Result<_, _>>()?;
+        assert_eq!(
+            relative,
+            [
+                "root.rs",
+                "plain.rs",
+                "plain/inline/nested.rs",
+                "custom/selected.inc",
+                "custom/sibling.rs",
+                "choice.rs",
+                "alternate.rs"
+            ]
+            .into_iter()
+            .map(PathBuf::from)
+            .collect()
+        );
         Ok(())
     }
 

@@ -8,6 +8,7 @@ pub mod bs_detector;
 pub mod code_audit;
 pub mod feedback;
 pub mod intel;
+mod module_discovery;
 mod organization;
 pub mod output;
 pub mod parser;
