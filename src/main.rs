@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
-use colored::*;
+use colored::Colorize;
 
 mod cli;
 
@@ -14,10 +14,10 @@ async fn main() -> Result<()> {
 
     match args.command {
         cli::Commands::Anoint(command) => match command.command {
-            Some(cli::AnointSubcommand::Bs(opts)) => run_code_audit_command(opts),
-            None => run_anoint_command(command.opts).await,
+            Some(cli::AnointSubcommand::Bs(opts)) => run_code_audit_command(&opts),
+            None => run_anoint_command(&command.opts).await,
         },
-        cli::Commands::Bs(opts) => run_code_audit_command(opts),
+        cli::Commands::Bs(opts) => run_code_audit_command(&opts),
     }
 }
 
@@ -30,7 +30,7 @@ fn resolution_options(opts: &cli::AnointOpts) -> cargo_anoint::parser::Resolutio
     }
 }
 
-fn use_tagged_suggestions(opts: &cli::AnointOpts) -> bool {
+const fn use_tagged_suggestions(opts: &cli::AnointOpts) -> bool {
     opts.workspace || !opts.package.is_empty()
 }
 
@@ -68,17 +68,12 @@ fn parse_fail_on_levels(
             "medium" => {
                 out.insert(cargo_anoint::suggestions::Impact::Medium);
             }
-            "high" => {
-                out.insert(cargo_anoint::suggestions::Impact::High);
-            }
-            // Reserved alias: dependency suggestions only map to Low/Medium/High today.
-            "critical" => {
+            "high" | "critical" => {
                 out.insert(cargo_anoint::suggestions::Impact::High);
             }
             other => {
                 bail!(
-                    "unknown --fail-on level {:?} (expected low, medium, high, or critical)",
-                    other
+                    "unknown --fail-on level {other:?} (expected low, medium, high, or critical)"
                 );
             }
         }
@@ -98,7 +93,7 @@ fn dependency_fail_triggered(
 
 fn maybe_fail_on_exit(
     suggestions: &[cargo_anoint::suggestions::Suggestion],
-    levels: &Option<HashSet<cargo_anoint::suggestions::Impact>>,
+    levels: Option<&HashSet<cargo_anoint::suggestions::Impact>>,
     fail_on_overlap: bool,
 ) -> Result<()> {
     if fail_on_overlap
@@ -108,17 +103,15 @@ fn maybe_fail_on_exit(
     {
         bail!("exiting with non-zero status: potential overlapping dependency providers");
     }
-    if let Some(set) = levels {
-        if dependency_fail_triggered(suggestions, set) {
-            bail!(
-                "exiting with non-zero status: at least one dependency suggestion matched --fail-on"
-            );
-        }
+    if let Some(set) = levels
+        && dependency_fail_triggered(suggestions, set)
+    {
+        bail!("exiting with non-zero status: at least one dependency suggestion matched --fail-on");
     }
     Ok(())
 }
 
-async fn run_anoint_command(opts: cli::AnointOpts) -> Result<()> {
+async fn run_anoint_command(opts: &cli::AnointOpts) -> Result<()> {
     if opts.init_ci {
         return run_init_ci(opts.manifest_path.as_deref());
     }
@@ -128,8 +121,8 @@ async fn run_anoint_command(opts: cli::AnointOpts) -> Result<()> {
     if let Some(ref pattern) = opts.explain {
         return run_explain(pattern);
     }
-    reject_invalid_flag_combinations(&opts)?;
-    reject_unfinished_flags(&opts)?;
+    reject_invalid_flag_combinations(opts)?;
+    reject_unfinished_flags(opts)?;
     if opts.feedback {
         return run_feedback_command(opts);
     }
@@ -147,135 +140,267 @@ async fn run_anoint_command(opts: cli::AnointOpts) -> Result<()> {
     };
     let fail_levels = parse_fail_on_levels(&effective_fail_on)?;
 
+    if opts.update_rules {
+        cargo_anoint::updater::update_rules().await?;
+        println!(
+            "Candidate rules fetched; review changes using the update-suggestions binary before committing."
+        );
+        return Ok(());
+    }
+    let scan = DependencyScan::new(opts, policy.as_ref())?;
     if opts.summary {
-        return run_summary_mode(&opts, &fail_levels, policy.as_ref());
+        scan.summary();
+    } else if opts.json {
+        scan.render_json(opts).await?;
+    } else {
+        scan.render_text(opts).await?;
     }
+    maybe_fail_on_exit(
+        &scan.all,
+        fail_levels.as_ref(),
+        opts.fail_on_overlap || policy.as_ref().is_some_and(|p| p.settings.fail_on_overlap),
+    )
+}
 
-    let run_code_audit = opts.audit_code;
-    let code_audit_config = cargo_anoint::code_audit::config_from_policy(policy.as_ref());
-    let tagged = use_tagged_suggestions(&opts)
-        || policy.as_ref().is_some_and(|p| !p.allow_overlap.is_empty());
-    let effective_all_targets =
-        opts.all_targets || policy.as_ref().is_some_and(|p| p.settings.all_targets);
-    let snapshots = cargo_anoint::parser::get_package_snapshots(
-        manifest,
-        opts.workspace,
-        &opts.package,
-        effective_all_targets,
-        &resolution_options(&opts),
-    )?;
-    let rules = cargo_anoint::suggestions::load_rules()?;
+struct DependencyScan {
+    snapshots: Vec<cargo_anoint::parser::PackageResult>,
+    per_package: Vec<Vec<cargo_anoint::suggestions::Suggestion>>,
+    all: Vec<cargo_anoint::suggestions::Suggestion>,
+    code_audit_config: cargo_anoint::code_audit::CodeAuditConfig,
+    offline: bool,
+}
 
-    let mut per_pkg_suggestions: Vec<Vec<cargo_anoint::suggestions::Suggestion>> = Vec::new();
-    for snap in &snapshots {
-        let mpath = snap.manifest_path.as_path();
-        let raw = if tagged {
-            cargo_anoint::suggestions::analyze_for_package(
-                Some(mpath),
-                &snap.deps,
-                &rules,
-                Some(snap.name.as_str()),
-            )?
-        } else {
-            cargo_anoint::suggestions::analyze(Some(mpath), &snap.deps, &rules)?
-        };
-        per_pkg_suggestions.push(apply_policy(raw, policy.as_ref()));
-    }
+impl DependencyScan {
+    fn new(opts: &cli::AnointOpts, policy: Option<&cargo_anoint::policy::Policy>) -> Result<Self> {
+        let manifest = opts.manifest_path.as_deref();
+        let tagged =
+            use_tagged_suggestions(opts) || policy.is_some_and(|p| !p.allow_overlap.is_empty());
+        let effective_all_targets =
+            opts.all_targets || policy.is_some_and(|p| p.settings.all_targets);
+        let snapshots = cargo_anoint::parser::get_package_snapshots(
+            manifest,
+            opts.workspace,
+            &opts.package,
+            effective_all_targets,
+            &resolution_options(opts),
+        )?;
+        let rules = cargo_anoint::suggestions::load_rules()?;
 
-    let all_suggestions: Vec<cargo_anoint::suggestions::Suggestion> =
-        per_pkg_suggestions.iter().flatten().cloned().collect();
+        let mut per_pkg_suggestions: Vec<Vec<cargo_anoint::suggestions::Suggestion>> = Vec::new();
+        for snap in &snapshots {
+            let mpath = snap.manifest_path.as_path();
+            let raw = if tagged {
+                cargo_anoint::suggestions::analyze_for_package(
+                    Some(mpath),
+                    &snap.deps,
+                    &rules,
+                    Some(snap.name.as_str()),
+                )?
+            } else {
+                cargo_anoint::suggestions::analyze(Some(mpath), &snap.deps, &rules)?
+            };
+            per_pkg_suggestions.push(apply_policy(raw, policy));
+        }
 
-    let packages_for_json: Vec<cargo_anoint::output::JsonPackageOutput<'_>> = snapshots
-        .iter()
-        .zip(per_pkg_suggestions.iter())
-        .map(|(snap, sug)| cargo_anoint::output::JsonPackageOutput {
-            name: snap.name.as_str(),
-            version: snap.version.as_str(),
-            manifest_path: snap.manifest_path.display().to_string(),
-            dependency_suggestions: sug.as_slice(),
+        let all = per_pkg_suggestions.iter().flatten().cloned().collect();
+        Ok(Self {
+            snapshots,
+            per_package: per_pkg_suggestions,
+            all,
+            code_audit_config: cargo_anoint::code_audit::config_from_policy(policy),
+            offline: opts.offline || policy.is_some_and(|p| p.settings.offline),
         })
-        .collect();
+    }
 
-    if opts.json {
-        let merged_audit = if run_code_audit {
-            let reports: Vec<_> = snapshots
-                .iter()
-                .map(|s| {
-                    cargo_anoint::code_audit::scan_project(
-                        Some(s.manifest_path.as_path()),
-                        &code_audit_config,
-                    )
-                })
-                .collect::<Result<_, _>>()?;
-            Some(cargo_anoint::code_audit::merge_reports(reports))
+    fn audit(&self) -> Result<cargo_anoint::code_audit::CodeAuditReport> {
+        let reports = self
+            .snapshots
+            .iter()
+            .map(|s| {
+                cargo_anoint::code_audit::scan_project(
+                    Some(&s.manifest_path),
+                    &self.code_audit_config,
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(cargo_anoint::code_audit::merge_reports(reports))
+    }
+
+    fn summary(&self) {
+        let stats: Vec<_> = self
+            .snapshots
+            .iter()
+            .map(|s| {
+                (
+                    s.name.as_str(),
+                    s.deps.iter().filter(|d| d.is_direct).count(),
+                    s.deps.len(),
+                )
+            })
+            .collect();
+        println!("🙏 cargo-anoint v{}", env!("CARGO_PKG_VERSION"));
+        println!();
+        cargo_anoint::output::render_summary(&stats, &self.all);
+        println!();
+    }
+
+    async fn render_json(&self, opts: &cli::AnointOpts) -> Result<()> {
+        let packages_for_json: Vec<cargo_anoint::output::JsonPackageOutput<'_>> = self
+            .snapshots
+            .iter()
+            .zip(self.per_package.iter())
+            .map(|(snap, sug)| cargo_anoint::output::JsonPackageOutput {
+                name: snap.name.as_str(),
+                version: snap.version.as_str(),
+                manifest_path: snap.manifest_path.display().to_string(),
+                dependency_suggestions: sug.as_slice(),
+            })
+            .collect();
+
+        let merged_audit = if opts.audit_code {
+            Some(self.audit()?)
         } else {
             None
         };
-        let advisories_for_json = if !opts.offline
-            && !policy.as_ref().is_some_and(|p| p.settings.offline)
-            && !opts.no_advisories
-        {
-            let dependencies = unique_direct_dependency_versions(&snapshots);
+        let advisories_for_json = if !self.offline && !opts.no_advisories {
+            let dependencies = unique_direct_dependency_versions(&self.snapshots);
             cargo_anoint::advisories::fetch_advisories_batch_for_versions(&dependencies).await
         } else {
             Vec::new()
         };
         let report = cargo_anoint::output::JsonReportUnified {
             cargo_anoint_version: env!("CARGO_PKG_VERSION"),
-            workspace_scan: opts.workspace || snapshots.len() > 1,
+            workspace_scan: opts.workspace || self.snapshots.len() > 1,
             packages: packages_for_json,
             code_audit: merged_audit.as_ref(),
             hardcoded_values: None,
             security_advisories: advisories_for_json,
         };
         cargo_anoint::output::render_unified_json(&report);
-        maybe_fail_on_exit(
-            &all_suggestions,
-            &fail_levels,
-            opts.fail_on_overlap || policy.as_ref().is_some_and(|p| p.settings.fail_on_overlap),
-        )?;
-        return Ok(());
+        Ok(())
     }
 
-    println!("🙏 cargo-anoint v{}", env!("CARGO_PKG_VERSION"));
-    println!();
+    async fn fetch_intel(&self) -> HashMap<String, cargo_anoint::intel::CrateIntel> {
+        if !self.offline && !self.all.is_empty() {
+            let crate_names: Vec<&str> =
+                self.all.iter().flat_map(|s| s.current.split('+')).collect();
 
-    if opts.update_rules {
-        cargo_anoint::updater::update_rules().await?;
+            if let Ok(client) = cargo_anoint::intel::IntelClient::new() {
+                println!("{}", "🌐 Fetching live intelligence...".dimmed());
+                let result = client.fetch_bulk_intel(&crate_names).await;
+                if result.is_empty() && !crate_names.is_empty() {
+                    println!(
+                        "{}",
+                        "⚠️  Live data unavailable (offline or rate-limited)"
+                            .yellow()
+                            .dimmed()
+                    );
+                }
+                println!();
+                result
+            } else {
+                println!(
+                    "{}",
+                    "⚠️  Could not initialize live intelligence (continuing without)"
+                        .yellow()
+                        .dimmed()
+                );
+                println!();
+                HashMap::new()
+            }
+        } else {
+            HashMap::new()
+        }
+    }
+
+    async fn render_text(&self, opts: &cli::AnointOpts) -> Result<()> {
+        println!("🙏 cargo-anoint v{}", env!("CARGO_PKG_VERSION"));
         println!();
-        println!(
-            "Candidate rules fetched; review changes using the update-suggestions binary before committing."
-        );
-        return Ok(());
-    }
-
-    if opts.fix {
-        if opts.dry_run {
-            println!(
-                "🔍 Dry-run — previewing Cargo.toml edits only (no writes, no `cargo update`)"
-            );
-            println!(
+        if opts.fix {
+            if opts.dry_run {
+                println!(
+                    "🔍 Dry-run — previewing Cargo.toml edits only (no writes, no `cargo update`)"
+                );
+                println!(
                 "{}",
                 "   `--fix` never modifies Rust sources; manifests may get a `.toml.bak` when applied."
                     .dimmed()
             );
-        } else {
-            println!(
-                "{}",
-                "🔧 Applying Cargo.toml autofixes (Rust source is never touched)".bold()
-            );
+            } else {
+                println!(
+                    "{}",
+                    "🔧 Applying Cargo.toml autofixes (Rust source is never touched)".bold()
+                );
+            }
+            println!();
         }
-        println!();
+
+        print_dependency_summary(&self.snapshots);
+        let intel = self.fetch_intel().await;
+        let views: Vec<cargo_anoint::output::PackageSuggestionView<'_>> = self
+            .snapshots
+            .iter()
+            .zip(self.per_package.iter())
+            .map(|(snap, sug)| cargo_anoint::output::PackageSuggestionView {
+                name: snap.name.as_str(),
+                version: snap.version.as_str(),
+                manifest_path: snap.manifest_path.as_path(),
+                suggestions: sug.as_slice(),
+            })
+            .collect();
+
+        cargo_anoint::output::render_packages_modernization(&views, &intel);
+
+        // Security advisory check (osv.dev) — one batch call for all direct deps
+        if !self.offline && !opts.no_advisories {
+            let direct_dependencies = unique_direct_dependency_versions(&self.snapshots);
+            if !direct_dependencies.is_empty() {
+                let hits = cargo_anoint::advisories::fetch_advisories_batch_for_versions(
+                    &direct_dependencies,
+                )
+                .await;
+                cargo_anoint::output::render_advisories(&hits);
+            }
+        }
+
+        if opts.audit_code {
+            cargo_anoint::output::render_code_audit_report(&self.audit()?, opts.verbose);
+        }
+        self.apply_fixes(opts)
     }
 
+    fn apply_fixes(&self, opts: &cli::AnointOpts) -> Result<()> {
+        if opts.fix && !self.all.is_empty() {
+            println!();
+            for (snap, pkg_sugs) in self.snapshots.iter().zip(&self.per_package) {
+                if pkg_sugs.is_empty() {
+                    continue;
+                }
+                println!(
+                    "{}",
+                    format!(
+                        "── Autofix: {} ({}) ──",
+                        snap.name,
+                        snap.manifest_path.display()
+                    )
+                    .dimmed()
+                );
+                cargo_anoint::fix::apply(pkg_sugs, &snap.manifest_path, opts.dry_run)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn print_dependency_summary(snapshots: &[cargo_anoint::parser::PackageResult]) {
     println!("📋 Scanning dependencies...");
     println!();
 
-    if snapshots.len() == 1 {
-        let snap = &snapshots[0];
+    if let [snap] = snapshots {
         let deps = &snap.deps;
         let direct: Vec<_> = deps.iter().filter(|d| d.is_direct).collect();
-        let transitive: Vec<_> = deps.iter().filter(|d| !d.is_direct).collect();
+        let transitive_count = deps.len() - direct.len();
 
         println!(
             "{}",
@@ -299,7 +424,7 @@ async fn run_anoint_command(opts: cli::AnointOpts) -> Result<()> {
         println!();
         println!(
             "{}",
-            format!("📎 Transitive dependencies ({})", transitive.len()).dimmed()
+            format!("📎 Transitive dependencies ({transitive_count})").dimmed()
         );
 
         println!();
@@ -308,16 +433,14 @@ async fn run_anoint_command(opts: cli::AnointOpts) -> Result<()> {
             format!("Found {} direct deps, {} total.", direct.len(), deps.len()).bold()
         );
     } else {
-        for snap in &snapshots {
+        for snap in snapshots {
             let direct = snap.deps.iter().filter(|d| d.is_direct).count();
             let total = snap.deps.len();
             println!(
-                "  {} {} v{} — {} direct, {} total ({})",
+                "  {} {} v{} — {direct} direct, {total} total ({})",
                 "•".green(),
                 snap.name.bold(),
                 snap.version.dimmed(),
-                direct,
-                total,
                 snap.manifest_path.display().to_string().dimmed()
             );
         }
@@ -330,190 +453,17 @@ async fn run_anoint_command(opts: cli::AnointOpts) -> Result<()> {
         println!(
             "{}",
             format!(
-                "Workspace: {} members · {} direct deps (sum) · {} resolved rows (sum).",
-                snapshots.len(),
-                total_direct,
-                total_all
+                "Workspace: {} members · {total_direct} direct deps (sum) · {total_all} resolved rows (sum).",
+                snapshots.len()
             )
             .bold()
         );
     }
 
     println!();
-    let effective_offline = opts.offline
-        || policy
-            .as_ref()
-            .is_some_and(|policy| policy.settings.offline);
-    let intel = if !effective_offline && !all_suggestions.is_empty() {
-        let crate_names: Vec<&str> = all_suggestions
-            .iter()
-            .flat_map(|s| s.current.split('+'))
-            .collect();
-
-        match cargo_anoint::intel::IntelClient::new() {
-            Ok(client) => {
-                println!("{}", "🌐 Fetching live intelligence...".dimmed());
-                let result = client.fetch_bulk_intel(&crate_names).await;
-                if result.is_empty() && !crate_names.is_empty() {
-                    println!(
-                        "{}",
-                        "⚠️  Live data unavailable (offline or rate-limited)"
-                            .yellow()
-                            .dimmed()
-                    );
-                }
-                println!();
-                result
-            }
-            Err(_) => {
-                println!(
-                    "{}",
-                    "⚠️  Could not initialize live intelligence (continuing without)"
-                        .yellow()
-                        .dimmed()
-                );
-                println!();
-                HashMap::new()
-            }
-        }
-    } else {
-        HashMap::new()
-    };
-
-    let views: Vec<cargo_anoint::output::PackageSuggestionView<'_>> = snapshots
-        .iter()
-        .zip(per_pkg_suggestions.iter())
-        .map(|(snap, sug)| cargo_anoint::output::PackageSuggestionView {
-            name: snap.name.as_str(),
-            version: snap.version.as_str(),
-            manifest_path: snap.manifest_path.as_path(),
-            suggestions: sug.as_slice(),
-        })
-        .collect();
-
-    cargo_anoint::output::render_packages_modernization(&views, &intel);
-
-    // Security advisory check (osv.dev) — one batch call for all direct deps
-    if !effective_offline && !opts.no_advisories {
-        let direct_dependencies = unique_direct_dependency_versions(&snapshots);
-        if !direct_dependencies.is_empty() {
-            let hits =
-                cargo_anoint::advisories::fetch_advisories_batch_for_versions(&direct_dependencies)
-                    .await;
-            cargo_anoint::output::render_advisories(&hits);
-        }
-    }
-
-    if run_code_audit {
-        let reports: Vec<_> = snapshots
-            .iter()
-            .map(|s| {
-                cargo_anoint::code_audit::scan_project(
-                    Some(s.manifest_path.as_path()),
-                    &code_audit_config,
-                )
-            })
-            .collect::<Result<_, _>>()?;
-        let merged = cargo_anoint::code_audit::merge_reports(reports);
-        cargo_anoint::output::render_code_audit_report(&merged, opts.verbose);
-    }
-
-    if opts.fix && !all_suggestions.is_empty() {
-        println!();
-        for snap in &snapshots {
-            let pkg_sugs: Vec<cargo_anoint::suggestions::Suggestion> = if tagged {
-                all_suggestions
-                    .iter()
-                    .filter(|s| s.package.as_deref() == Some(snap.name.as_str()))
-                    .cloned()
-                    .collect()
-            } else {
-                all_suggestions.clone()
-            };
-            if pkg_sugs.is_empty() {
-                continue;
-            }
-            println!(
-                "{}",
-                format!(
-                    "── Autofix: {} ({}) ──",
-                    snap.name,
-                    snap.manifest_path.display()
-                )
-                .dimmed()
-            );
-            cargo_anoint::fix::apply(&pkg_sugs, &snap.manifest_path, opts.dry_run)?;
-        }
-    }
-
-    maybe_fail_on_exit(
-        &all_suggestions,
-        &fail_levels,
-        opts.fail_on_overlap || policy.as_ref().is_some_and(|p| p.settings.fail_on_overlap),
-    )?;
-
-    Ok(())
 }
 
-fn run_summary_mode(
-    opts: &cli::AnointOpts,
-    fail_levels: &Option<HashSet<cargo_anoint::suggestions::Impact>>,
-    policy: Option<&cargo_anoint::policy::Policy>,
-) -> Result<()> {
-    let manifest = opts.manifest_path.as_deref();
-    let tagged =
-        use_tagged_suggestions(opts) || policy.is_some_and(|p| !p.allow_overlap.is_empty());
-    let effective_all_targets = opts.all_targets || policy.is_some_and(|p| p.settings.all_targets);
-    let snapshots = cargo_anoint::parser::get_package_snapshots(
-        manifest,
-        opts.workspace,
-        &opts.package,
-        effective_all_targets,
-        &resolution_options(opts),
-    )?;
-    let rules = cargo_anoint::suggestions::load_rules()?;
-
-    let mut all = Vec::new();
-    for snap in &snapshots {
-        let mpath = snap.manifest_path.as_path();
-        let raw = if tagged {
-            cargo_anoint::suggestions::analyze_for_package(
-                Some(mpath),
-                &snap.deps,
-                &rules,
-                Some(snap.name.as_str()),
-            )?
-        } else {
-            cargo_anoint::suggestions::analyze(Some(mpath), &snap.deps, &rules)?
-        };
-        all.extend(apply_policy(raw, policy));
-    }
-
-    let scan_stats: Vec<(&str, usize, usize)> = snapshots
-        .iter()
-        .map(|s| {
-            (
-                s.name.as_str(),
-                s.deps.iter().filter(|d| d.is_direct).count(),
-                s.deps.len(),
-            )
-        })
-        .collect();
-
-    println!("🙏 cargo-anoint v{}", env!("CARGO_PKG_VERSION"));
-    println!();
-    cargo_anoint::output::render_summary(&scan_stats, &all);
-    println!();
-
-    maybe_fail_on_exit(
-        &all,
-        fail_levels,
-        opts.fail_on_overlap || policy.is_some_and(|p| p.settings.fail_on_overlap),
-    )?;
-    Ok(())
-}
-
-fn run_feedback_command(opts: cli::AnointOpts) -> Result<()> {
+fn run_feedback_command(opts: &cli::AnointOpts) -> Result<()> {
     let manifest = opts.manifest_path.as_deref();
     let policy = load_policy(opts.policy.as_deref(), manifest)?;
     let code_audit_config = cargo_anoint::code_audit::config_from_policy(policy.as_ref());
@@ -540,7 +490,7 @@ fn run_feedback_command(opts: cli::AnointOpts) -> Result<()> {
     Ok(())
 }
 
-fn run_code_audit_command(opts: cli::CodeAuditOpts) -> Result<()> {
+fn run_code_audit_command(opts: &cli::CodeAuditOpts) -> Result<()> {
     let manifest = opts.manifest_path.as_deref();
     let policy = load_policy(opts.policy.as_deref(), manifest)?;
     let mut code_audit_config = cargo_anoint::code_audit::config_from_policy(policy.as_ref());
@@ -592,12 +542,11 @@ fn run_code_audit_command(opts: cli::CodeAuditOpts) -> Result<()> {
         let gated_count = report
             .alerts
             .iter()
-            .filter(|a| a.confidence as f64 >= threshold)
+            .filter(|a| f64::from(a.confidence) >= threshold)
             .count();
         if gated_count > 0 {
             eprintln!(
-                "cargo-anoint: {} finding(s) at confidence >= {:.2}; exiting with non-zero status.",
-                gated_count, threshold
+                "cargo-anoint: {gated_count} finding(s) at confidence >= {threshold:.2}; exiting with non-zero status."
             );
             std::process::exit(1);
         }
@@ -610,17 +559,17 @@ fn load_policy(
     explicit_path: Option<&Path>,
     manifest_path: Option<&Path>,
 ) -> Result<Option<cargo_anoint::policy::Policy>> {
-    match explicit_path {
-        Some(path) => cargo_anoint::policy::try_load_policy(path).map(Some),
-        None => {
+    explicit_path.map_or_else(
+        || {
             let path = default_policy_path(manifest_path);
             if path.exists() {
                 cargo_anoint::policy::try_load_policy(&path).map(Some)
             } else {
                 Ok(None)
             }
-        }
-    }
+        },
+        |path| cargo_anoint::policy::try_load_policy(path).map(Some),
+    )
 }
 
 fn default_policy_path(manifest_path: Option<&Path>) -> PathBuf {
@@ -631,7 +580,7 @@ fn default_policy_path(manifest_path: Option<&Path>) -> PathBuf {
         .join("anoint.toml")
 }
 
-const INIT_CI_WORKFLOW: &str = r#"name: cargo-anoint
+const INIT_CI_WORKFLOW: &str = r"name: cargo-anoint
 
 on:
   push:
@@ -668,7 +617,7 @@ jobs:
         if: always()
         with:
           sarif_file: anoint-audit.sarif
-"#;
+";
 
 fn run_init_ci(manifest_path: Option<&Path>) -> Result<()> {
     let base = manifest_path
@@ -781,7 +730,7 @@ fn run_explain(pattern: &str) -> Result<()> {
             rule.migration_risk
         );
         if let Some(ref cond) = rule.condition {
-            println!("  {:<16} {}", "Condition:".bold(), cond);
+            println!("  {:<16} {cond}", "Condition:".bold());
         }
         println!("  {:<16} {}", "Source:".bold(), rule.source);
         println!();
@@ -805,7 +754,7 @@ fn textwrap_rule(s: &str) -> Vec<String> {
             current.push(' ');
             current.push_str(word);
         } else {
-            lines.push(current.clone());
+            lines.push(std::mem::take(&mut current));
             current = word.to_string();
         }
     }
@@ -845,9 +794,8 @@ fn apply_code_audit_fixes(
 
         if dry_run {
             println!(
-                "   {} {} .unwrap() → .expect(\"TODO: handle this\") in {}",
+                "   {} {count} .unwrap() → .expect(\"TODO: handle this\") in {}",
                 "would replace".dimmed(),
-                count,
                 file.display()
             );
         } else {
@@ -865,15 +813,13 @@ fn apply_code_audit_fixes(
 
     if dry_run {
         println!(
-            "🔍 Dry-run: {} .unwrap() call(s) across {} file(s) would be replaced (no files written).",
-            total_replacements,
+            "🔍 Dry-run: {total_replacements} .unwrap() call(s) across {} file(s) would be replaced (no files written).",
             files_to_fix.len()
         );
         println!("   Remove --dry-run to apply the fixes.");
     } else {
         println!(
-            "🙏 Fixed {} .unwrap() call(s) across {} file(s). Backups written as *.rs.bak.",
-            total_replacements,
+            "🙏 Fixed {total_replacements} .unwrap() call(s) across {} file(s). Backups written as *.rs.bak.",
             files_to_fix.len()
         );
         println!("   Review each .expect() and replace the TODO with a real reason.");

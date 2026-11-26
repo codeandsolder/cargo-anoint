@@ -41,9 +41,8 @@ async fn main() -> Result<()> {
     }
 
     println!(
-        "Merged: {} hand-authored + {} new from blessed.rs = {} total",
+        "Merged: {} hand-authored + {from_blessed} new from blessed.rs = {} total",
         merged.len() - from_blessed,
-        from_blessed,
         merged.len()
     );
 

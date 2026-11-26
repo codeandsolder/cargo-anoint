@@ -32,6 +32,10 @@ pub enum AnointSubcommand {
 }
 
 #[derive(Args, Debug)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "Independent CLI flags are mapped directly by clap; option compatibility is validated after parsing"
+)]
 pub struct AnointOpts {
     /// Apply suggested changes to Cargo.toml only (`*.toml.bak` backup before write; never touches `.rs`).
     #[arg(long)]
@@ -123,7 +127,7 @@ pub struct AnointOpts {
     #[arg(long)]
     pub init_hooks: bool,
 
-    /// Show full details for a suggestion pattern (e.g. --explain lazy_static).
+    /// Show full details for a suggestion pattern (e.g. --explain `lazy_static`).
     #[arg(long, value_name = "PATTERN")]
     pub explain: Option<String>,
 
@@ -133,6 +137,10 @@ pub struct AnointOpts {
 }
 
 #[derive(Args, Debug)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "Independent CLI flags are mapped directly by clap rather than representing a state machine"
+)]
 pub struct CodeAuditOpts {
     /// Path to the Cargo.toml whose source tree should be audited.
     #[arg(long, value_name = "PATH")]
@@ -166,7 +174,7 @@ pub struct CodeAuditOpts {
     #[arg(long, value_name = "FLOAT")]
     pub fail_on_confidence: Option<f64>,
 
-    /// Auto-fix safe findings: replaces .unwrap() with .expect("TODO") (writes *.rs.bak backups).
+    /// Auto-fix safe findings: replaces `.unwrap()` with `.expect("TODO")` (writes *.rs.bak backups).
     #[arg(long)]
     pub fix: bool,
 
