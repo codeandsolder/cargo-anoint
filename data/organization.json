@@ -103,7 +103,8 @@
         "masonry_imaging",
         "masonry_testing",
         "masonry_winit",
-        "xilem_web"
+        "xilem_web",
+        "yarugc"
       ]
     },
     {
@@ -161,6 +162,27 @@
       "packages": [
         "rolldown_redox",
         "string_wizard"
+      ]
+    },
+    {
+      "repository": "fontations",
+      "packages": [
+        "font-types",
+        "read-fonts",
+        "skrifa",
+        "write-fonts"
+      ]
+    },
+    {
+      "repository": "i-love-proland",
+      "packages": [
+        "i-love-proland"
+      ]
+    },
+    {
+      "repository": "lorax-rs",
+      "packages": [
+        "lorax-rs"
       ]
     }
   ],
@@ -366,6 +388,16 @@
       ],
       "preferred": "rustc-hash",
       "notes": "fxhash is unmaintained; check deterministic hash output and iteration order when migrating."
+    },
+    {
+      "name": "mesh optimization and simplification",
+      "providers": [
+        "meshoptimizer-rs",
+        "rmeshopt",
+        "meshopt"
+      ],
+      "preferred": "meshoptimizer-rs where the required meshlet, cluster LOD, simplification and attribute operations are supported",
+      "notes": "Consolidate independent meshoptimizer implementations. Preserve attribute weights, seams, indices, error units and meshlet limits; benchmark geometry quality and throughput."
     }
   ],
   "preferences": [
@@ -551,6 +583,32 @@
       "notes": "The shared compression-backend patch disables flate2 default features and enables zlib-rs. Preserve compression format behavior; other enabled flate2 consumers can still activate miniz_oxide.",
       "include_transitive": true,
       "satisfied_repository": "cargo-patches"
+    },
+    {
+      "packages": [
+        "image_dds"
+      ],
+      "preferred": "ddsfile plus bcdec_rs for callers that already parse DDS and only require BC decompression",
+      "notes": "Avoid reparsing the original bytes and decoding unused mips. Keep image_dds where its higher-level encode, surface or format conversion APIs are actually needed."
+    },
+    {
+      "packages": [
+        "parry3d-f64"
+      ],
+      "preferred": "Use Parry with a patched Rstar dependency when the locked Rstar version forces an affected Heapless release",
+      "notes": "The shared ksp-physics patch upgrades Parry 0.31.1 to Rstar 0.14.0, permitting Heapless 0.9.4. Check current RustSec and owner constraints before adopting; a fixed upstream release supersedes this patch.",
+      "include_transitive": true,
+      "satisfied_repository": "cargo-patches"
+    },
+    {
+      "packages": [
+        "png",
+        "usvg"
+      ],
+      "preferred": "Select a single Flate2 zlib-rs backend through the owning crates",
+      "notes": "The shared ksp-image-codecs patch removes PNG’s unused direct Miniz dependency and selects zlib-rs for PNG encoding and SVGZ. Keep Fdeflate’s specialized PNG paths unless benchmarks justify replacement. Review enabled features and prefer a fixed upstream release.",
+      "include_transitive": true,
+      "satisfied_repository": "cargo-patches"
     }
   ],
   "feature_preferences": [
@@ -612,6 +670,34 @@
       ],
       "preferred": "Disable default features when WebSocket server functions are unused; explicitly enable the required Tokio and Tower HTTP features",
       "notes": "The default enables server_fn/axum and axum/ws, which pulls in tungstenite and tokio-tungstenite. Preserve axum-no-default HTTP server function support and actual static-file routes. Keep WebSockets when used.",
+      "include_transitive": true
+    },
+    {
+      "package": "wgpu",
+      "competing_features": [
+        "default"
+      ],
+      "preferred": "Select only the graphics backends and shader languages required by the final application",
+      "notes": "A library borrowing an existing device should not force all WGPU backends. Inspect renderer backend selection and every dependency edge; preserve genuine cross-platform backend support.",
+      "include_transitive": true
+    },
+    {
+      "package": "winit",
+      "competing_features": [
+        "wayland-csd-adwaita"
+      ],
+      "preferred": "Disable client-side Adwaita decorations when an application does not need that decoration implementation",
+      "notes": "Keep X11 and Wayland support where required; removal of decoration text rendering can remove an obsolete font stack. Validate real compositor behavior.",
+      "include_transitive": true
+    },
+    {
+      "package": "resvg",
+      "competing_features": [
+        "text",
+        "raster-images"
+      ],
+      "preferred": "Select SVG text/raster decoding only when required by actual SVG assets",
+      "notes": "Do not silently drop support for SVG text or embedded raster images. A vector-only use case can avoid font shaping and image codec dependencies; otherwise modernize the owning font stack.",
       "include_transitive": true
     }
   ],
