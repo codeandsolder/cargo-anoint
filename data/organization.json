@@ -74,7 +74,13 @@
         "oxc_transformer",
         "oxc_isolated_declarations",
         "oxc_formatter",
-        "oxc_linter"
+        "oxc_linter",
+        "oxc_ast_macros",
+        "oxc_cfg",
+        "oxc_compat",
+        "oxc_data_structures",
+        "oxc_ecmascript",
+        "oxc_str"
       ]
     },
     {
@@ -148,6 +154,13 @@
         "server_fn",
         "opendal-core",
         "opendal-service-redis"
+      ]
+    },
+    {
+      "repository": "rolldown-crates-redox",
+      "packages": [
+        "rolldown_redox",
+        "string_wizard"
       ]
     }
   ],
@@ -324,6 +337,35 @@
           "rustix"
         ]
       ]
+    },
+    {
+      "name": "Base64 codec",
+      "providers": [
+        "base64",
+        "base64-simd",
+        "data-encoding"
+      ],
+      "preferred": "one Base64 codec; prefer modern base64 where its format and throughput meet requirements",
+      "notes": "data-encoding may be needed for other encodings; preserve URL-safe, padding and canonical decode behavior and benchmark SIMD paths.",
+      "complementary_pairs": [
+        [
+          "base64",
+          "data-encoding"
+        ],
+        [
+          "base64-simd",
+          "data-encoding"
+        ]
+      ]
+    },
+    {
+      "name": "Fx hash implementation",
+      "providers": [
+        "fxhash",
+        "rustc-hash"
+      ],
+      "preferred": "rustc-hash",
+      "notes": "fxhash is unmaintained; check deterministic hash output and iteration order when migrating."
     }
   ],
   "preferences": [
@@ -472,6 +514,22 @@
     },
     {
       "packages": [
+        "base64-simd"
+      ],
+      "preferred": "base64 0.23 or newer compatible SIMD implementation",
+      "notes": "Compare vectorized source-map throughput and error semantics before migrating; do not change public format or padding behavior.",
+      "include_transitive": true
+    },
+    {
+      "packages": [
+        "nix"
+      ],
+      "preferred": "rustix for supported syscall APIs when already present",
+      "notes": "Do not force a wrapper migration when platform or syscall support differs. Use checked PID and flag conversions; preserve process-group and signal behavior.",
+      "include_transitive": true
+    },
+    {
+      "packages": [
         "linked-hash-map"
       ],
       "preferred": "lru for recency-bounded caches; indexmap for insertion-ordered maps",
@@ -484,6 +542,15 @@
       ],
       "preferred": "Jiff for new date/time formatting and calendrical operations where compatible",
       "notes": "Consolidate if Jiff is already required. Evaluate supported timestamp range, time zones, serialization formats and WASM support before migrating; not a drop-in type alias."
+    },
+    {
+      "packages": [
+        "compression-codecs"
+      ],
+      "preferred": "enable flate2 zlib-rs backend when used for gzip/deflate",
+      "notes": "The shared compression-backend patch disables flate2 default features and enables zlib-rs. Preserve compression format behavior; other enabled flate2 consumers can still activate miniz_oxide.",
+      "include_transitive": true,
+      "satisfied_repository": "cargo-patches"
     }
   ],
   "feature_preferences": [
@@ -530,6 +597,15 @@
       "include_transitive": true
     },
     {
+      "package": "mime_guess",
+      "competing_features": [
+        "rev-mappings"
+      ],
+      "preferred": "disable default reverse MIME mappings if only extension-to-MIME lookup is required",
+      "notes": "Keep the complete forward database; inspect consumers for get_mime_extensions and other reverse lookups.",
+      "include_transitive": true
+    },
+    {
       "package": "leptos_axum",
       "competing_features": [
         "default"
@@ -537,6 +613,38 @@
       "preferred": "Disable default features when WebSocket server functions are unused; explicitly enable the required Tokio and Tower HTTP features",
       "notes": "The default enables server_fn/axum and axum/ws, which pulls in tungstenite and tokio-tungstenite. Preserve axum-no-default HTTP server function support and actual static-file routes. Keep WebSockets when used.",
       "include_transitive": true
+    }
+  ],
+  "version_families": [
+    {
+      "name": "wasm-tools release generation",
+      "members": [
+        {
+          "package": "wasmparser",
+          "version_component": 1
+        },
+        {
+          "package": "wasm-encoder",
+          "version_component": 1
+        },
+        {
+          "package": "wasmprinter",
+          "version_component": 1
+        },
+        {
+          "package": "wasm-smith",
+          "version_component": 1
+        },
+        {
+          "package": "wat",
+          "version_component": 1
+        },
+        {
+          "package": "wast",
+          "version_component": 0
+        }
+      ],
+      "notes": "Align compatible parser, encoder, printer, WAT and fuzz generator releases; independent upstream pins or distinct tool boundaries can justify a split."
     }
   ]
 }
