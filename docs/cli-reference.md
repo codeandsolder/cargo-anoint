@@ -6,8 +6,8 @@ Invoked as `cargo anoint …` once `cargo-anoint` is on your `PATH` (`cargo inst
 
 | Invocation | Meaning |
 |------------|---------|
-| `cargo anoint` | Dependency scan + optional code audit (`--audit-code`), JSON, workspace flags, autofix (`--fix`). |
-| `cargo anoint bs` | Code audit only (`--diff`, `--fix`, `--json`, `--sarif`, `--manifest-path`, `--policy`, `--verbose`). |
+| `cargo anoint` | Dependency scan + optional code audit (`--audit-code`), JSON, workspace flags. |
+| `cargo anoint bs` | Code audit only (`--diff`, `--json`, `--sarif`, `--manifest-path`, `--policy`, `--verbose`). |
 | `cargo anoint … bs …` | Nested `AnointSubcommand::Bs` — audit-only shortcut. |
 
 ## Paste-friendly vs machine output
@@ -19,7 +19,7 @@ Invoked as `cargo anoint …` once `cargo-anoint` is on your `PATH` (`cargo inst
 | `--summary` | Per-member dep counts + impact tallies + short pattern bullets | Paste into chats (skips intel fetch entirely) |
 | `--json` | Structured JSON (**`cargo_anoint_version`**, **`workspace_scan`**, **`packages[]`**, **`code_audit`**, **`security_advisories`**) | Scripts / CI |
 
-**Mutual exclusion:** **`--feedback`**, **`--summary`**, **`--json`**, **`--fix`**, **`--audit-code`** combinations are constrained as in `cargo anoint --help` (e.g. **`--feedback`** forbids **`--workspace`/`--package`**; **`--summary`** forbids **`--audit-code`**).
+**Mutual exclusion:** **`--feedback`**, **`--summary`**, **`--json`**, **`--audit-code`** combinations are constrained as in `cargo anoint --help` (e.g. **`--feedback`** forbids **`--workspace`/`--package`**; **`--summary`** forbids **`--audit-code`**).
 
 ## `cargo anoint` flags
 
@@ -28,9 +28,7 @@ Invoked as `cargo anoint …` once `cargo-anoint` is on your `PATH` (`cargo inst
 | `--manifest-path=PATH` | Workspace root or package `Cargo.toml` (defaults to cwd). Virtual `[workspace]` roots work with **`--workspace`**. |
 | `--offline` | Skip crates.io / GitHub / osv.dev intelligence fetches. Rules + caches still apply. Also settable via `anoint.toml` `[settings].offline`. |
 | `--no-advisories` | Skip the osv.dev advisory check even when online. |
-| `--json` | Print unified JSON; cannot combine with **`--fix`**, **`--update-rules`**, **`--feedback`**, **`--summary`**. |
-| `--fix` | Apply **Cargo.toml-only** autofixes to each selected member manifest (writes **`Cargo.toml.bak`**, runs **`cargo update`** when not **`--dry-run`**). Never touches **`.rs`**. |
-| `--dry-run` | With **`--fix`**, print diff/plan without writing files. Requires **`--fix`**. |
+| `--json` | Print unified JSON; cannot combine with **`--update-rules`**, **`--feedback`**, **`--summary`**. |
 | `--feedback` | Privacy-minded aggregate feedback block (**root crate only**). |
 | `--summary` | Short dependency summary (**no intel**). Cannot combine with **`--audit-code`**. |
 | `--fail-on=L[,…]` | Exit **non-zero** if any retained suggestion's **`impact`** is in **`{low, medium, high, critical}`**. **`critical`** is currently an alias for **high** (dependency tier only). |
@@ -66,8 +64,6 @@ Top-level fields:
 | `--json` | Output findings as unified JSON (`code_audit` key). |
 | `--sarif` | Output findings as SARIF 2.1.0 JSON (for `upload-sarif` in GitHub Actions). |
 | `--diff` | Audit only lines changed in `git diff HEAD`. |
-| `--fix` | Auto-replace `.unwrap()` → `.expect("TODO: handle this")` across all flagged files. Writes `*.rs.bak` backups. |
-| `--dry-run` | With **`--fix`**, preview what would change without writing any files. |
 | `--include-tests` | Also scan `tests/`, `examples/`, and `benches/` (default: `src/` only). |
 | `--hardcoded` | Also scan for hardcoded values: magic numbers, API keys, IPs, URLs, credentials. |
 | `--fail-on-confidence=FLOAT` | Exit non-zero if any finding has confidence ≥ this value (0.0–1.0). |

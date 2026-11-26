@@ -2,7 +2,6 @@ pub mod advisories;
 pub mod bs_detector;
 pub mod code_audit;
 pub mod feedback;
-pub mod fix;
 pub mod intel;
 mod organization;
 pub mod output;

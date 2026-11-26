@@ -8,7 +8,6 @@
     "condition": null,
     "confidence": "High",
     "migration_risk": "High",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "RustSec",
     "include_transitive": true
   },
@@ -21,7 +20,6 @@
     "condition": null,
     "confidence": "High",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "RustSec",
     "include_transitive": true
   },
@@ -34,7 +32,6 @@
     "condition": null,
     "confidence": "High",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "RustSec",
     "include_transitive": true
   },
@@ -47,7 +44,6 @@
     "condition": null,
     "confidence": "High",
     "migration_risk": "High",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "RustSec",
     "include_transitive": true
   },
@@ -60,7 +56,6 @@
     "condition": null,
     "confidence": "High",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "RustSec",
     "include_transitive": true
   },
@@ -73,7 +68,6 @@
     "condition": null,
     "confidence": "High",
     "migration_risk": "Low",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "StdDocs"
   },
   {
@@ -85,7 +79,6 @@
     "condition": null,
     "confidence": "High",
     "migration_risk": "Low",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "StdDocs"
   },
   {
@@ -97,7 +90,6 @@
     "condition": null,
     "confidence": "High",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "BlessedRs"
   },
   {
@@ -109,7 +101,6 @@
     "condition": null,
     "confidence": "Low",
     "migration_risk": "High",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "BlessedRs"
   },
   {
@@ -121,7 +112,6 @@
     "condition": null,
     "confidence": "High",
     "migration_risk": "High",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "BlessedRs"
   },
   {
@@ -133,7 +123,6 @@
     "condition": null,
     "confidence": "High",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "RustSec"
   },
   {
@@ -145,7 +134,6 @@
     "condition": null,
     "confidence": "High",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "BlessedRs"
   },
   {
@@ -157,7 +145,6 @@
     "condition": null,
     "confidence": "Medium",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "BlessedRs"
   },
   {
@@ -169,7 +156,6 @@
     "condition": null,
     "confidence": "Medium",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "BlessedRs"
   },
   {
@@ -181,7 +167,6 @@
     "condition": null,
     "confidence": "Medium",
     "migration_risk": "High",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "BlessedRs"
   },
   {
@@ -193,7 +178,6 @@
     "condition": null,
     "confidence": "Low",
     "migration_risk": "High",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "BlessedRs"
   },
   {
@@ -205,7 +189,6 @@
     "condition": null,
     "confidence": "High",
     "migration_risk": "Low",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "StdDocs"
   },
   {
@@ -217,7 +200,6 @@
     "condition": null,
     "confidence": "High",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "BlessedRs"
   },
   {
@@ -229,7 +211,6 @@
     "condition": null,
     "confidence": "Medium",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "CrateDocs"
   },
   {
@@ -241,7 +222,6 @@
     "condition": null,
     "confidence": "Medium",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "CratesIo"
   },
   {
@@ -253,7 +233,6 @@
     "condition": null,
     "confidence": "High",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "BlessedRs"
   },
   {
@@ -265,7 +244,6 @@
     "condition": null,
     "confidence": "High",
     "migration_risk": "Low",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "StdDocs"
   },
   {
@@ -277,7 +255,6 @@
     "condition": null,
     "confidence": "High",
     "migration_risk": "High",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "BlessedRs"
   },
   {
@@ -289,7 +266,6 @@
     "condition": null,
     "confidence": "High",
     "migration_risk": "Low",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "CrateDocs"
   },
   {
@@ -301,7 +277,6 @@
     "condition": null,
     "confidence": "High",
     "migration_risk": "Low",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "CrateDocs"
   },
   {
@@ -313,7 +288,6 @@
     "condition": null,
     "confidence": "Medium",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "Heuristic"
   },
   {
@@ -325,7 +299,6 @@
     "condition": null,
     "confidence": "Medium",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "Heuristic"
   },
   {
@@ -337,7 +310,6 @@
     "condition": null,
     "confidence": "Medium",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "Heuristic"
   },
   {
@@ -349,7 +321,6 @@
     "condition": null,
     "confidence": "Medium",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "BlessedRs"
   },
   {
@@ -361,7 +332,6 @@
     "condition": null,
     "confidence": "High",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "CratesIo"
   },
   {
@@ -373,7 +343,6 @@
     "condition": null,
     "confidence": "High",
     "migration_risk": "Low",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "CratesIo"
   },
   {
@@ -385,7 +354,6 @@
     "condition": null,
     "confidence": "High",
     "migration_risk": "Low",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "StdDocs"
   },
   {
@@ -397,7 +365,6 @@
     "condition": null,
     "confidence": "Medium",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "CratesIo"
   },
   {
@@ -409,7 +376,6 @@
     "condition": null,
     "confidence": "Medium",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "BlessedRs"
   },
   {
@@ -421,7 +387,6 @@
     "condition": null,
     "confidence": "Medium",
     "migration_risk": "Low",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "CratesIo"
   },
   {
@@ -433,7 +398,6 @@
     "condition": null,
     "confidence": "Medium",
     "migration_risk": "Low",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "CratesIo"
   },
   {
@@ -445,7 +409,6 @@
     "condition": null,
     "confidence": "High",
     "migration_risk": "Low",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "CratesIo"
   },
   {
@@ -457,7 +420,6 @@
     "condition": "non-dyn trait usage",
     "confidence": "Medium",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "StdDocs"
   },
   {
@@ -469,7 +431,6 @@
     "condition": null,
     "confidence": "High",
     "migration_risk": "Low",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "CratesIo"
   },
   {
@@ -481,7 +442,6 @@
     "condition": null,
     "confidence": "Medium",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "BlessedRs"
   },
   {
@@ -493,7 +453,6 @@
     "condition": null,
     "confidence": "Medium",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "BlessedRs"
   },
   {
@@ -505,7 +464,6 @@
     "condition": null,
     "confidence": "High",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "BlessedRs"
   },
   {
@@ -517,7 +475,6 @@
     "condition": null,
     "confidence": "High",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "CratesIo"
   },
   {
@@ -529,7 +486,6 @@
     "condition": null,
     "confidence": "Medium",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "BlessedRs"
   },
   {
@@ -541,7 +497,6 @@
     "condition": "Native TLS with compatible BoringSSL API",
     "confidence": "Medium",
     "migration_risk": "High",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "Heuristic"
   },
   {
@@ -553,7 +508,6 @@
     "condition": null,
     "confidence": "High",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "RustSec",
     "include_transitive": true
   },
@@ -566,7 +520,6 @@
     "condition": "Only simple const-expressible assertions",
     "confidence": "Medium",
     "migration_risk": "Low",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "StdDocs",
     "include_transitive": false
   },
@@ -579,7 +532,6 @@
     "condition": "Only fixed-width endian operations",
     "confidence": "High",
     "migration_risk": "Low",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "StdDocs",
     "include_transitive": false
   },
@@ -592,7 +544,6 @@
     "condition": "Only where native feature detection covers supported targets",
     "confidence": "Medium",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "StdDocs",
     "include_transitive": false
   },
@@ -605,7 +556,6 @@
     "condition": "Only when equivalent allocation behavior and Unicode semantics are verified",
     "confidence": "Medium",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "StdDocs",
     "include_transitive": false
   },
@@ -618,7 +568,6 @@
     "condition": "MSRV >= 1.89; review nonblocking and cross-platform semantics",
     "confidence": "High",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "StdDocs",
     "include_transitive": true
   },
@@ -631,7 +580,6 @@
     "condition": "Only simple, well-defined copy operations",
     "confidence": "Medium",
     "migration_risk": "Medium",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "StdDocs",
     "include_transitive": true
   }

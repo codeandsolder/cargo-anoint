@@ -17,20 +17,10 @@ pub struct Suggestion {
     pub impact: Impact,
     pub confidence: Confidence,
     pub migration_risk: MigrationRisk,
-    pub autofix_safety: AutofixSafety,
     pub evidence_source: EvidenceSource,
     /// Workspace member that triggered this suggestion (root-only runs use `None`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub package: Option<String>,
-}
-
-impl Suggestion {
-    /// Whether this suggestion can be auto-applied by editing Cargo.toml only.
-    /// Only suggestions explicitly marked as Cargo.toml-only are eligible.
-    #[must_use = "Use the result to decide whether editing the manifest is sufficient"]
-    pub const fn is_auto_fixable(&self) -> bool {
-        matches!(self.autofix_safety, AutofixSafety::CargoTomlOnly)
-    }
 }
 
 /// The type of suggestion.
@@ -74,15 +64,6 @@ pub enum MigrationRisk {
     Low,
 }
 
-/// Whether cargo-anoint may safely apply the suggestion itself.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum AutofixSafety {
-    /// Safe to apply by changing Cargo.toml only.
-    CargoTomlOnly,
-    /// Requires source review or source edits.
-    ManualOnly,
-}
-
 /// Primary evidence behind a recommendation.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum EvidenceSource {
@@ -111,8 +92,6 @@ pub struct Rule {
     pub confidence: Confidence,
     #[serde(default = "default_migration_risk")]
     pub migration_risk: MigrationRisk,
-    #[serde(default = "default_autofix_safety")]
-    pub autofix_safety: AutofixSafety,
     #[serde(default = "default_evidence_source")]
     pub evidence_source: EvidenceSource,
 }
@@ -134,10 +113,6 @@ const fn default_confidence() -> Confidence {
 
 const fn default_migration_risk() -> MigrationRisk {
     MigrationRisk::Medium
-}
-
-const fn default_autofix_safety() -> AutofixSafety {
-    AutofixSafety::ManualOnly
 }
 
 const fn default_evidence_source() -> EvidenceSource {
@@ -231,7 +206,6 @@ pub fn analyze_for_package(
                 impact: impact_for(&rule.kind),
                 confidence: rule.confidence.clone(),
                 migration_risk: rule.migration_risk.clone(),
-                autofix_safety: rule.autofix_safety.clone(),
                 evidence_source: rule.evidence_source.clone(),
                 package: package_label.map(String::from),
             });
@@ -278,18 +252,25 @@ fn is_crate_used_in_source(manifest_path: Option<&Path>, crate_name: &str) -> bo
 
 fn scan_dir_for_patterns(dir: &Path, patterns: &[String]) -> bool {
     let Ok(entries) = fs::read_dir(dir) else {
-        return false;
+        return true;
     };
 
-    for entry in entries.flatten() {
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return true;
+        };
         let path = entry.path();
-        if path.is_dir() {
+        let Ok(file_type) = entry.file_type() else {
+            return true; // Cannot establish that the dependency is unused.
+        };
+        if file_type.is_dir() {
             if scan_dir_for_patterns(&path, patterns) {
                 return true;
             }
-        } else if path.extension().and_then(|e| e.to_str()) == Some("rs")
-            && let Ok(contents) = fs::read_to_string(&path)
-        {
+        } else if file_type.is_file() && path.extension().and_then(|e| e.to_str()) == Some("rs") {
+            let Ok(contents) = fs::read_to_string(&path) else {
+                return true;
+            };
             for pattern in patterns {
                 if contents.contains(pattern) {
                     return true;
@@ -390,7 +371,6 @@ mod tests {
             condition: None,
             confidence: Confidence::High,
             migration_risk: MigrationRisk::Low,
-            autofix_safety: AutofixSafety::CargoTomlOnly,
             evidence_source: EvidenceSource::Heuristic,
         };
 

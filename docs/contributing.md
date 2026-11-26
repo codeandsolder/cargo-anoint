@@ -18,7 +18,7 @@ Suggestions ship from `data/suggestions.json`. Run **`cargo run --bin update-sug
 
 **Merge policy:** local rules **win pattern conflicts**. Blessed-derived rows are appended only when the pattern is not already defined in `data/suggestions.json` — so curated copy (e.g. `lazy_static` → `LazyLock`) is never overwritten. After a merge, skim the tail of the JSON and drop any row that contradicts its own rationale (upstream data quirks happen).
 
-Embedded metadata (`confidence`, `migration_risk`, `autofix_safety`) should stay honest on hand-edited rows.
+Embedded metadata (`confidence`, `migration_risk`) should stay honest on hand-edited rows.
 
 To eyeball blessed.rs tone against the live site (outside of `crates.json` alone), **`firecrawl scrape https://blessed.rs/`** (or `/crates`) is a quick way to snapshot the human-facing directory; source of truth for automation remains `https://github.com/nicoburns/blessed-rs/raw/main/data/crates.json`.
 

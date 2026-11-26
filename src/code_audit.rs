@@ -205,7 +205,7 @@ pub fn scan_code(
         return Ok(Vec::new());
     }
 
-    let ignored_ranges = parse_ignored_ranges(code).unwrap_or_default();
+    let ignored_ranges = parse_ignored_ranges(code)?;
     let masked = mask_ranges(code, &ignored_ranges);
     let mut alerts = Vec::new();
 
@@ -267,7 +267,8 @@ fn collect_rust_files(
         let name = entry.file_name();
         let name = name.to_string_lossy();
 
-        if path.is_dir() {
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
             if should_skip_dir(&name) {
                 continue;
             }
@@ -275,7 +276,7 @@ fn collect_rust_files(
             continue;
         }
 
-        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+        if !file_type.is_file() || path.extension().and_then(|e| e.to_str()) != Some("rs") {
             continue;
         }
 
@@ -310,6 +311,7 @@ impl DiffFilter {
             .arg("diff")
             .arg("HEAD")
             .arg("--unified=0")
+            .arg("--relative")
             .arg("--")
             .output()
             .with_context(|| "failed to run git diff HEAD --unified=0")?;
@@ -377,7 +379,7 @@ fn parse_hunk_new_range(line: &str) -> Option<(usize, usize)> {
     if count == 0 {
         None
     } else {
-        Some((start, start + count - 1))
+        Some((start, start.checked_add(count - 1)?))
     }
 }
 
@@ -569,7 +571,7 @@ fn scan_line_patterns(code: &str, file: &Path, alerts: &mut Vec<BullshitAlert>) 
                 col + 1,
                 line,
                 "unwrap() is a runtime trap dressed up as confidence.",
-                "Replace with .expect(\"reason it can't fail\") for a panic with context, propagate with ?, or handle the None/Err explicitly.",
+                "Propagate with ?, handle None/Err explicitly, or encode the invariant in the type.",
             ));
         }
 

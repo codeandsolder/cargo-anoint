@@ -1,5 +1,6 @@
 //! Policy layer — parses anoint.toml for custom rules, overrides, and enforcement settings.
 
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -129,9 +130,13 @@ pub fn load_policy(path: &Path) -> Option<Policy> {
 /// Returns an error for missing or unreadable files, invalid TOML, or invalid overlap exceptions.
 pub fn try_load_policy(path: &Path) -> anyhow::Result<Policy> {
     let content = fs::read_to_string(path)
-        .map_err(|err| anyhow::anyhow!("failed to read policy {}: {err}", path.display()))?;
+        .with_context(|| format!("failed to read policy {}", path.display()))?;
     let policy: Policy = toml_edit::de::from_str(&content)
-        .map_err(|err| anyhow::anyhow!("failed to parse policy {}: {err}", path.display()))?;
+        .with_context(|| format!("failed to parse policy {}", path.display()))?;
+    anyhow::ensure!(
+        (0.0..=1.0).contains(&policy.settings.min_confidence),
+        "min_confidence must be between 0 and 1"
+    );
     for entry in &policy.allow_overlap {
         if entry.package.trim().is_empty()
             || entry.reason.trim().is_empty()
@@ -161,7 +166,7 @@ pub fn apply_policy(
     suggestions: Vec<crate::suggestions::Suggestion>,
     policy: &Policy,
 ) -> Vec<crate::suggestions::Suggestion> {
-    let filtered: Vec<_> = suggestions
+    suggestions
         .into_iter()
         .filter(|s| {
             if s.kind == crate::suggestions::SuggestionKind::CapabilityOverlap {
@@ -191,9 +196,7 @@ pub fn apply_policy(
 
             true
         })
-        .collect();
-
-    filtered
+        .collect()
 }
 
 fn suggestion_crates(current: &str) -> impl Iterator<Item = &str> {
@@ -248,7 +251,6 @@ suppress = true
             impact: crate::suggestions::Impact::High,
             confidence: crate::suggestions::Confidence::High,
             migration_risk: crate::suggestions::MigrationRisk::Low,
-            autofix_safety: crate::suggestions::AutofixSafety::ManualOnly,
             evidence_source: crate::suggestions::EvidenceSource::Heuristic,
             package: None,
         }];
@@ -274,7 +276,6 @@ suppress = true
                 impact: crate::suggestions::Impact::Low,
                 confidence: crate::suggestions::Confidence::Medium,
                 migration_risk: crate::suggestions::MigrationRisk::Medium,
-                autofix_safety: crate::suggestions::AutofixSafety::ManualOnly,
                 evidence_source: crate::suggestions::EvidenceSource::Heuristic,
                 package: None,
             })
@@ -301,7 +302,6 @@ suppress = true
                 impact: crate::suggestions::Impact::Low,
                 confidence: crate::suggestions::Confidence::Medium,
                 migration_risk: crate::suggestions::MigrationRisk::Medium,
-                autofix_safety: crate::suggestions::AutofixSafety::ManualOnly,
                 evidence_source: crate::suggestions::EvidenceSource::Heuristic,
                 package: None,
             },
@@ -314,7 +314,6 @@ suppress = true
                 impact: crate::suggestions::Impact::Low,
                 confidence: crate::suggestions::Confidence::Medium,
                 migration_risk: crate::suggestions::MigrationRisk::Medium,
-                autofix_safety: crate::suggestions::AutofixSafety::ManualOnly,
                 evidence_source: crate::suggestions::EvidenceSource::Heuristic,
                 package: None,
             },

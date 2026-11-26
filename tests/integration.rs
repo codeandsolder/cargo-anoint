@@ -23,21 +23,6 @@ fn test_bless_reports_deps() {
         .stdout(predicate::str::contains("Found"));
 }
 
-/// Running with --fix --dry-run should analyze and show fix preview.
-#[test]
-fn test_fix_dry_run() {
-    cargo_anoint_cmd()
-        .arg("--fix")
-        .arg("--dry-run")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Dry-run"))
-        .stdout(
-            predicate::str::contains("No auto-fixable suggestions")
-                .or(predicate::str::contains("Nothing to modernize")),
-        );
-}
-
 /// Running with --help should print usage information.
 #[test]
 fn test_help_flag() {
@@ -142,27 +127,6 @@ lazy_static = "1"
 }
 
 #[test]
-fn test_dry_run_without_fix_exits_nonzero() {
-    cargo_anoint_cmd()
-        .arg("--dry-run")
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("--dry-run requires --fix"));
-}
-
-#[test]
-fn test_json_fix_combination_exits_nonzero() {
-    cargo_anoint_cmd()
-        .arg("--json")
-        .arg("--fix")
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains(
-            "--json cannot be combined with --fix",
-        ));
-}
-
-#[test]
 fn test_json_update_rules_combination_exits_nonzero() {
     cargo_anoint_cmd()
         .arg("--json")
@@ -185,18 +149,6 @@ fn test_feedback_prints_block() {
         .stdout(predicate::str::contains("direct_deps:"))
         .stdout(predicate::str::contains("code_audit_findings:"))
         .stdout(predicate::str::contains("top_hotspots:"));
-}
-
-#[test]
-fn test_feedback_with_fix_exits_nonzero() {
-    cargo_anoint_cmd()
-        .arg("--feedback")
-        .arg("--fix")
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains(
-            "--feedback cannot be combined with --fix",
-        ));
 }
 
 #[test]
@@ -292,9 +244,9 @@ memmap = "0.7"
     assert!(stdout.contains("memmap"), "should detect memmap");
 }
 
-/// Verify --fix --dry-run on a project with auto-fixable deps shows the diff.
+/// Recommendations must never modify the manifest or offer automatic migration.
 #[test]
-fn test_fix_dry_run_on_outdated_project() {
+fn test_scan_outdated_project_is_read_only() {
     use std::fs;
     use tempfile::TempDir;
 
@@ -341,16 +293,19 @@ serde_derive = { path = "crates/serde_derive" }
     cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
-        .arg("--fix")
-        .arg("--dry-run")
         .arg("--offline");
 
+    let original = fs::read_to_string(&manifest).expect("read original manifest");
     let output = cmd.output().expect("run cargo-anoint");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "should exit 0: {}", stdout);
+    assert_eq!(
+        fs::read_to_string(&manifest).expect("read manifest after scan"),
+        original
+    );
     assert!(
-        stdout.contains("No auto-fixable suggestions"),
+        !stdout.contains("--fix"),
         "unsafe automatic edits must not be offered"
     );
     assert!(
@@ -1358,123 +1313,23 @@ fn test_explain_flag_unknown_pattern_exits_nonzero() {
 }
 
 #[test]
-fn test_bs_fix_replaces_unwrap_with_expect() {
-    use std::fs;
-    use tempfile::TempDir;
-
-    let tmp = TempDir::new().expect("temp dir");
-    let manifest = tmp.path().join("Cargo.toml");
-
-    fs::write(
-        &manifest,
-        r#"[package]
-name = "fix-test"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-"#,
-    )
-    .expect("write Cargo.toml");
-
-    fs::create_dir_all(tmp.path().join("src")).expect("create src");
-    fs::write(
-        tmp.path().join("src/main.rs"),
-        "fn main() { let x: Option<u32> = None; let _ = x.unwrap(); }\n",
-    )
-    .expect("write main.rs");
-
-    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
-    cmd.arg("bs")
-        .arg("--manifest-path")
-        .arg(&manifest)
-        .arg("--fix");
-
-    let output = cmd.output().expect("run cargo anoint bs --fix");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    assert!(output.status.success(), "should exit 0: {}", stdout);
-    assert!(
-        stdout.contains("Fixed"),
-        "should report fixes applied: {}",
-        stdout
-    );
-
-    let modified = fs::read_to_string(tmp.path().join("src/main.rs")).expect("read modified file");
-    assert!(
-        modified.contains(".expect("),
-        "source should contain .expect(): {}",
-        modified
-    );
-    assert!(
-        !modified.contains(".unwrap()"),
-        "source should no longer contain .unwrap(): {}",
-        modified
-    );
-
-    let backup = tmp.path().join("src/main.rs.bak");
-    assert!(backup.exists(), ".rs.bak backup should be created");
-    let backup_contents = fs::read_to_string(&backup).expect("read backup");
-    assert!(
-        backup_contents.contains(".unwrap()"),
-        "backup should contain original .unwrap(): {}",
-        backup_contents
-    );
-}
-
-#[test]
-fn test_bs_fix_dry_run_prints_preview_without_writing() {
-    use std::fs;
-    use tempfile::TempDir;
-
-    let tmp = TempDir::new().expect("temp dir");
-    let manifest = tmp.path().join("Cargo.toml");
-    let src = tmp.path().join("src/main.rs");
-
-    fs::write(
-        &manifest,
-        r#"[package]
-name = "fix-dry-run-test"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-"#,
-    )
-    .expect("write Cargo.toml");
-
-    fs::create_dir_all(tmp.path().join("src")).expect("create src");
-    let original = "fn main() { let x: Option<u32> = None; let _ = x.unwrap(); }\n";
-    fs::write(&src, original).expect("write main.rs");
-
-    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
-    cmd.arg("bs")
-        .arg("--manifest-path")
-        .arg(&manifest)
-        .arg("--fix")
-        .arg("--dry-run");
-
-    let output = cmd.output().expect("run cargo anoint bs --fix --dry-run");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    assert!(output.status.success(), "should exit 0: {}", stdout);
-    assert!(stdout.contains("Dry-run"), "should say dry-run: {}", stdout);
-    assert!(
-        stdout.contains("would be replaced"),
-        "should say what would be replaced: {}",
-        stdout
-    );
-
-    let after = fs::read_to_string(&src).expect("read file after dry-run");
-    assert_eq!(
-        after, original,
-        "source file must not be modified by --dry-run"
-    );
-    let backup = tmp.path().join("src/main.rs.bak");
-    assert!(
-        !backup.exists(),
-        "no backup should be written during --dry-run"
-    );
+fn test_bs_rejects_panic_preserving_autofix() -> anyhow::Result<()> {
+    let tmp = tempfile::TempDir::new()?;
+    let src = tmp.path().join("main.rs");
+    let original = "fn main() { let _ = None::<u32>.unwrap(); }";
+    std::fs::write(&src, original)?;
+    for command in ["bs", "anoint"] {
+        for flag in ["--fix", "--dry-run"] {
+            Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"))
+                .current_dir(tmp.path())
+                .args([command, flag])
+                .assert()
+                .failure();
+        }
+    }
+    assert_eq!(std::fs::read_to_string(&src)?, original);
+    assert!(!src.with_extension("rs.bak").exists());
+    Ok(())
 }
 
 #[test]

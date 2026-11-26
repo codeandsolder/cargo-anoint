@@ -10,7 +10,7 @@ use serde::Serialize;
 
 use crate::code_audit::{CodeAuditReport, kind_label};
 use crate::intel::CrateIntel;
-use crate::suggestions::{AutofixSafety, Confidence, Impact, MigrationRisk, SuggestionKind};
+use crate::suggestions::{Confidence, Impact, MigrationRisk, SuggestionKind};
 use crate::suggestions::{EvidenceSource, Suggestion};
 
 fn print_suggestion_detail<S: BuildHasher>(
@@ -38,10 +38,6 @@ fn print_suggestion_detail<S: BuildHasher>(
         MigrationRisk::Medium => "[MED risk]".yellow(),
         MigrationRisk::Low => "[LOW risk]".green(),
     };
-    let autofix_tag = match suggestion.autofix_safety {
-        AutofixSafety::CargoTomlOnly => "[autofix: Cargo.toml-only]".green(),
-        AutofixSafety::ManualOnly => "[autofix: manual]".dimmed(),
-    };
     let verb = match suggestion.confidence {
         Confidence::High => "→",
         Confidence::Medium | Confidence::Low => "→ consider",
@@ -53,7 +49,7 @@ fn print_suggestion_detail<S: BuildHasher>(
         suggestion.recommended.green(),
     );
     println!(
-        "   {confidence_tag} {risk_tag} {autofix_tag} {}",
+        "   {confidence_tag} {risk_tag} {}",
         format!("evidence: {}", evidence_label(&suggestion.evidence_source)).dimmed()
     );
     println!("   {}", suggestion.reason.dimmed());
@@ -168,7 +164,7 @@ pub fn render_packages_modernization<S: BuildHasher>(
     println!(
         "{}",
         format!(
-            "{high_count} high-impact upgrade{} available. `--fix` only edits Cargo.toml (never Rust source). Run `cargo anoint --fix --dry-run` to preview.",
+            "{high_count} high-impact recommendation{} available. Review migrations before editing dependencies.",
             if high_count == 1 { "" } else { "s" }
         )
         .bold()
@@ -257,7 +253,7 @@ pub fn render_summary(scan_stats: &[(&str, usize, usize)], suggestions: &[Sugges
     println!();
     println!(
         "{}",
-        "`--fix` changes Cargo.toml entries only — never Rust source. Check `autofix_safety` on each suggestion."
+        "All migrations require manual review; this scan does not edit manifests or Rust sources."
             .dimmed()
     );
 }

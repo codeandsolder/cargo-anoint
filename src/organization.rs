@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 use crate::parser::ResolvedDep;
 use crate::suggestions::{
-    AutofixSafety, Confidence, EvidenceSource, Impact, MigrationRisk, Suggestion, SuggestionKind,
+    Confidence, EvidenceSource, Impact, MigrationRisk, Suggestion, SuggestionKind,
 };
 
 #[derive(Deserialize)]
@@ -119,7 +119,6 @@ fn finding(
         impact: Impact::Medium,
         confidence: Confidence::Medium,
         migration_risk: MigrationRisk::High,
-        autofix_safety: AutofixSafety::ManualOnly,
         evidence_source: EvidenceSource::Heuristic,
         package: package.map(str::to_owned),
     }
@@ -409,7 +408,7 @@ mod tests {
         assert_eq!(combos.len(), 1);
         assert_eq!(combos[0].current, "wreq+reqwest");
         assert_eq!(combos[0].package.as_deref(), Some("app"));
-        assert!(!combos[0].is_auto_fixable());
+
         assert!(
             analyze(
                 &[
@@ -457,7 +456,6 @@ mod tests {
         for name in removed {
             assert!(findings.iter().any(|f| f.current == name), "missing {name}");
         }
-        assert!(findings.iter().all(|f| !f.is_auto_fixable()));
     }
 
     #[test]
@@ -493,11 +491,7 @@ mod tests {
             None,
         );
         for name in ["linked-hash-map", "chrono", "leptos_axum"] {
-            assert!(
-                findings
-                    .iter()
-                    .any(|finding| finding.current == name && !finding.is_auto_fixable())
-            );
+            assert!(findings.iter().any(|finding| finding.current == name));
         }
     }
 
@@ -512,7 +506,7 @@ mod tests {
         assert!(
             findings
                 .iter()
-                .all(|f| f.kind == SuggestionKind::FeatureOptimization && !f.is_auto_fixable())
+                .all(|f| f.kind == SuggestionKind::FeatureOptimization)
         );
     }
 
@@ -596,9 +590,11 @@ mod tests {
         assert!(analyze(&[new.clone(), wat.clone(), wast.clone()], None).is_empty());
         let findings = analyze(&[old, new, wat, wast], None);
         assert_eq!(findings.len(), 2);
-        assert!(findings.iter().all(|f| f.impact == Impact::Low
-            && f.kind != SuggestionKind::CapabilityOverlap
-            && !f.is_auto_fixable()));
+        assert!(
+            findings
+                .iter()
+                .all(|f| f.impact == Impact::Low && f.kind != SuggestionKind::CapabilityOverlap)
+        );
         assert!(
             findings
                 .iter()

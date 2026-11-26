@@ -92,39 +92,40 @@ impl Patterns {
 /// Scan a directory tree for hardcoded bullshit values.
 ///
 /// # Errors
-/// Returns an error if a built-in regular expression cannot be compiled.
-pub fn scan_dir(root: &Path) -> Result<Vec<BSHit>, regex::Error> {
+/// Returns an error if a built-in regular expression cannot be compiled or a source file or directory cannot be read.
+pub fn scan_dir(root: &Path) -> anyhow::Result<Vec<BSHit>> {
     let patterns = Patterns::new()?;
     let mut hits = Vec::new();
-    scan_path(root, &mut hits, &patterns);
+    scan_path(root, &mut hits, &patterns)?;
     hits.sort_by(|a, b| a.file.cmp(&b.file).then(a.line.cmp(&b.line)));
     Ok(hits)
 }
 
-fn scan_path(dir: &Path, hits: &mut Vec<BSHit>, patterns: &Patterns) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-
-    for entry in entries.flatten() {
+fn scan_path(dir: &Path, hits: &mut Vec<BSHit>, patterns: &Patterns) -> anyhow::Result<()> {
+    use anyhow::Context;
+    for entry in fs::read_dir(dir).with_context(|| format!("failed to read {}", dir.display()))? {
+        let entry = entry?;
         let path = entry.path();
-        if path.is_dir() {
-            // Skip common non-source directories
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
             let skip = ["target", ".git", "node_modules", ".cargo"];
-            if let Some(name) = path.file_name().and_then(|n| n.to_str())
-                && skip.contains(&name)
+            if path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|name| skip.contains(&name))
             {
                 continue;
             }
-            scan_path(&path, hits, patterns);
-        } else if path.extension().and_then(|e| e.to_str()) == Some("rs")
-            && let Ok(content) = fs::read_to_string(&path)
-        {
+            scan_path(&path, hits, patterns)?;
+        } else if file_type.is_file() && path.extension().and_then(|e| e.to_str()) == Some("rs") {
+            let content = fs::read_to_string(&path)
+                .with_context(|| format!("failed to read {}", path.display()))?;
             for (i, line) in content.lines().enumerate() {
                 check_line(&path, i + 1, line, hits, patterns);
             }
         }
     }
+    Ok(())
 }
 
 /// Check a single line for hardcoded bullshit.

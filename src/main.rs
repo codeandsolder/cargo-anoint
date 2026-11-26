@@ -316,25 +316,6 @@ impl DependencyScan {
     async fn render_text(&self, opts: &cli::AnointOpts) -> Result<()> {
         println!("🙏 cargo-anoint v{}", env!("CARGO_PKG_VERSION"));
         println!();
-        if opts.fix {
-            if opts.dry_run {
-                println!(
-                    "🔍 Dry-run — previewing Cargo.toml edits only (no writes, no `cargo update`)"
-                );
-                println!(
-                "{}",
-                "   `--fix` never modifies Rust sources; manifests may get a `.toml.bak` when applied."
-                    .dimmed()
-            );
-            } else {
-                println!(
-                    "{}",
-                    "🔧 Applying Cargo.toml autofixes (Rust source is never touched)".bold()
-                );
-            }
-            println!();
-        }
-
         print_dependency_summary(&self.snapshots);
         let intel = self.fetch_intel().await;
         let views: Vec<cargo_anoint::output::PackageSuggestionView<'_>> = self
@@ -366,29 +347,6 @@ impl DependencyScan {
         if opts.audit_code {
             cargo_anoint::output::render_code_audit_report(&self.audit()?, opts.verbose);
         }
-        self.apply_fixes(opts)
-    }
-
-    fn apply_fixes(&self, opts: &cli::AnointOpts) -> Result<()> {
-        if opts.fix && !self.all.is_empty() {
-            println!();
-            for (snap, pkg_sugs) in self.snapshots.iter().zip(&self.per_package) {
-                if pkg_sugs.is_empty() {
-                    continue;
-                }
-                println!(
-                    "{}",
-                    format!(
-                        "── Autofix: {} ({}) ──",
-                        snap.name,
-                        snap.manifest_path.display()
-                    )
-                    .dimmed()
-                );
-                cargo_anoint::fix::apply(pkg_sugs, &snap.manifest_path, opts.dry_run)?;
-            }
-        }
-
         Ok(())
     }
 }
@@ -491,6 +449,12 @@ fn run_feedback_command(opts: &cli::AnointOpts) -> Result<()> {
 }
 
 fn run_code_audit_command(opts: &cli::CodeAuditOpts) -> Result<()> {
+    if let Some(threshold) = opts.fail_on_confidence {
+        anyhow::ensure!(
+            (0.0..=1.0).contains(&threshold),
+            "--fail-on-confidence must be between 0 and 1"
+        );
+    }
     let manifest = opts.manifest_path.as_deref();
     let policy = load_policy(opts.policy.as_deref(), manifest)?;
     let mut code_audit_config = cargo_anoint::code_audit::config_from_policy(policy.as_ref());
@@ -532,10 +496,6 @@ fn run_code_audit_command(opts: &cli::CodeAuditOpts) -> Result<()> {
             println!();
             cargo_anoint::bs_detector::render_bs_hits(&bs_hits);
         }
-    }
-
-    if opts.fix {
-        apply_code_audit_fixes(&report, opts.dry_run)?;
     }
 
     if let Some(threshold) = opts.fail_on_confidence {
@@ -764,70 +724,6 @@ fn textwrap_rule(s: &str) -> Vec<String> {
     lines
 }
 
-fn apply_code_audit_fixes(
-    report: &cargo_anoint::code_audit::CodeAuditReport,
-    dry_run: bool,
-) -> Result<()> {
-    use std::collections::BTreeSet;
-
-    let files_to_fix: BTreeSet<&std::path::PathBuf> = report
-        .alerts
-        .iter()
-        .filter(|a| a.kind == cargo_anoint::code_audit::BullshitKind::UnwrapAbuse)
-        .map(|a| &a.file)
-        .collect();
-
-    if files_to_fix.is_empty() {
-        return Ok(());
-    }
-
-    let mut total_replacements = 0usize;
-
-    for file in &files_to_fix {
-        let contents = std::fs::read_to_string(file)
-            .with_context(|| format!("failed to read {}", file.display()))?;
-
-        let count = contents.matches(".unwrap()").count();
-        if count == 0 {
-            continue;
-        }
-
-        if dry_run {
-            println!(
-                "   {} {count} .unwrap() → .expect(\"TODO: handle this\") in {}",
-                "would replace".dimmed(),
-                file.display()
-            );
-        } else {
-            let backup = file.with_extension("rs.bak");
-            std::fs::write(&backup, &contents)
-                .with_context(|| format!("failed to write backup {}", backup.display()))?;
-
-            let modified = contents.replace(".unwrap()", ".expect(\"TODO: handle this\")");
-            std::fs::write(file, &modified)
-                .with_context(|| format!("failed to write {}", file.display()))?;
-        }
-
-        total_replacements += count;
-    }
-
-    if dry_run {
-        println!(
-            "🔍 Dry-run: {total_replacements} .unwrap() call(s) across {} file(s) would be replaced (no files written).",
-            files_to_fix.len()
-        );
-        println!("   Remove --dry-run to apply the fixes.");
-    } else {
-        println!(
-            "🙏 Fixed {total_replacements} .unwrap() call(s) across {} file(s). Backups written as *.rs.bak.",
-            files_to_fix.len()
-        );
-        println!("   Review each .expect() and replace the TODO with a real reason.");
-    }
-
-    Ok(())
-}
-
 fn apply_policy(
     suggestions: Vec<cargo_anoint::suggestions::Suggestion>,
     policy: Option<&cargo_anoint::policy::Policy>,
@@ -847,12 +743,6 @@ fn reject_invalid_flag_combinations(opts: &cli::AnointOpts) -> Result<()> {
             || opts.target.is_some()
         {
             bail!("--feedback cannot be combined with overlap gating or feature/target selection");
-        }
-        if opts.fix {
-            bail!("--feedback cannot be combined with --fix");
-        }
-        if opts.dry_run {
-            bail!("--feedback cannot be combined with --dry-run");
         }
         if opts.json {
             bail!("--feedback cannot be combined with --json");
@@ -876,26 +766,12 @@ fn reject_invalid_flag_combinations(opts: &cli::AnointOpts) -> Result<()> {
         if opts.json {
             bail!("--summary cannot be combined with --json");
         }
-        if opts.fix {
-            bail!("--summary cannot be combined with --fix");
-        }
         if opts.update_rules {
             bail!("--summary cannot be combined with --update-rules");
         }
         if opts.audit_code {
             bail!("--summary cannot be combined with --audit-code");
         }
-        if opts.dry_run {
-            bail!(
-                "--summary cannot be combined with --dry-run (use `--fix --dry-run` on a normal run)"
-            );
-        }
-    }
-    if opts.dry_run && !opts.fix {
-        bail!("--dry-run requires --fix");
-    }
-    if opts.json && opts.fix {
-        bail!("--json cannot be combined with --fix");
     }
     if opts.json && opts.update_rules {
         bail!("--json cannot be combined with --update-rules");

@@ -37,14 +37,6 @@ pub enum AnointSubcommand {
     reason = "Independent CLI flags are mapped directly by clap; option compatibility is validated after parsing"
 )]
 pub struct AnointOpts {
-    /// Apply suggested changes to Cargo.toml only (`*.toml.bak` backup before write; never touches `.rs`).
-    #[arg(long)]
-    pub fix: bool,
-
-    /// With `--fix`, print the unified diff and planned actions without writing or running `cargo update`.
-    #[arg(long)]
-    pub dry_run: bool,
-
     /// Print a privacy-safe summary block suitable for pasting into issue reports (no paths to source snippets).
     #[arg(long)]
     pub feedback: bool,
@@ -173,14 +165,6 @@ pub struct CodeAuditOpts {
     /// Exit non-zero if any finding has confidence >= this value (0.0–1.0).
     #[arg(long, value_name = "FLOAT")]
     pub fail_on_confidence: Option<f64>,
-
-    /// Auto-fix safe findings: replaces `.unwrap()` with `.expect("TODO")` (writes *.rs.bak backups).
-    #[arg(long)]
-    pub fix: bool,
-
-    /// With `--fix`, show what would be changed without writing files or backups.
-    #[arg(long)]
-    pub dry_run: bool,
 
     /// Also scan tests/, examples/, and benches/ (default: src/ only).
     #[arg(long)]

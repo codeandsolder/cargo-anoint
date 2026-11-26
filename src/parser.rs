@@ -74,21 +74,13 @@ pub fn get_project_info(manifest_path: Option<&Path>) -> Result<(String, String)
 }
 
 /// Build a lookup from package ID to the resolved Node (which carries enabled features).
-fn build_node_lookup(resolve: &Resolve) -> HashMap<String, Node> {
-    resolve
-        .nodes
-        .iter()
-        .map(|n| (n.id.to_string(), n.clone()))
-        .collect()
+fn build_node_lookup(resolve: &Resolve) -> HashMap<&PackageId, &Node> {
+    resolve.nodes.iter().map(|n| (&n.id, n)).collect()
 }
 
 /// Build a map from package ID to package reference.
-fn build_pkg_lookup(metadata: &cargo_metadata::Metadata) -> HashMap<String, Package> {
-    metadata
-        .packages
-        .iter()
-        .map(|p| (p.id.to_string(), p.clone()))
-        .collect()
+fn build_pkg_lookup(metadata: &cargo_metadata::Metadata) -> HashMap<&PackageId, &Package> {
+    metadata.packages.iter().map(|p| (&p.id, p)).collect()
 }
 
 /// Parse the dependency tree for the project at `manifest_path` (resolved root crate only).
@@ -204,7 +196,8 @@ fn fetch_metadata_and_snapshots(
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No root package in resolve"))?;
         pkg_map
-            .get(&root_id.to_string())
+            .get(root_id)
+            .copied()
             .ok_or_else(|| anyhow::anyhow!("Root package not in cargo metadata packages list"))
     };
 
@@ -237,11 +230,12 @@ fn fetch_metadata_and_snapshots(
                         .iter()
                         .any(|p| p.name.eq_ignore_ascii_case(w.as_str()))
                     {
-                        missing.push(w.clone());
+                        missing.push(w);
                     }
                 }
 
                 if !missing.is_empty() {
+                    missing.sort_unstable();
                     bail!(
                         "no workspace package(s) matching {missing:?} — available: {}",
                         workspace_packages_ordered
@@ -280,25 +274,25 @@ fn fetch_metadata_and_snapshots(
 fn resolve_deps_for_root(
     root_pkg_id: &PackageId,
     resolve: &Resolve,
-    pkg_map: &HashMap<String, Package>,
-    node_map: &HashMap<String, Node>,
+    pkg_map: &HashMap<&PackageId, &Package>,
+    node_map: &HashMap<&PackageId, &Node>,
     all_targets: bool,
 ) -> Result<Vec<ResolvedDep>> {
     let root_node = node_map
-        .get(&root_pkg_id.to_string())
+        .get(root_pkg_id)
         .ok_or_else(|| anyhow::anyhow!("Root node missing in resolve.nodes"))?;
 
-    let direct_dep_ids: HashSet<String> = root_node
+    let direct_dep_ids: HashSet<&PackageId> = root_node
         .deps
         .iter()
         .filter(|d| all_targets || d.dep_kinds.iter().any(|k| k.kind == DependencyKind::Normal))
-        .map(|d| d.pkg.to_string())
+        .map(|d| &d.pkg)
         .collect();
 
     let mut reachable = HashSet::new();
-    let mut pending: Vec<_> = direct_dep_ids.iter().cloned().collect();
+    let mut pending: Vec<_> = direct_dep_ids.iter().copied().collect();
     while let Some(id) = pending.pop() {
-        if !reachable.insert(id.clone()) {
+        if !reachable.insert(id) {
             continue;
         }
         if let Some(node) = node_map.get(&id) {
@@ -310,7 +304,7 @@ fn resolve_deps_for_root(
                             .iter()
                             .any(|k| k.kind != DependencyKind::Development)
                     })
-                    .map(|d| d.pkg.to_string()),
+                    .map(|d| &d.pkg),
             );
         }
     }
@@ -318,21 +312,17 @@ fn resolve_deps_for_root(
     let mut deps = Vec::new();
 
     for node in &resolve.nodes {
-        if node.id == *root_pkg_id || !reachable.contains(&node.id.to_string()) {
+        if node.id == *root_pkg_id || !reachable.contains(&node.id) {
             continue;
         }
 
-        let Some(pkg) = pkg_map.get(&node.id.to_string()) else {
+        let Some(pkg) = pkg_map.get(&node.id) else {
             continue;
         };
 
-        let is_direct = direct_dep_ids.contains(&node.id.to_string());
+        let is_direct = direct_dep_ids.contains(&node.id);
 
-        let enabled_features: Vec<String> = node
-            .features
-            .iter()
-            .map(|s| s.as_str().to_string())
-            .collect();
+        let enabled_features = node.features.clone();
 
         let available_features: Vec<String> = pkg.features.keys().cloned().collect();
 
