@@ -37,6 +37,11 @@ configuration after fetching dependencies if network isolation is required.
 - Same-name fork recommendations cover the reviewed package families in
   zlib-rs-fast, quiche-fast, fast-socks5-fast, hayro, oxc, step-p21-fast,
   yarugc-rs, planetmap, waffle, ngspice-rs-fast and zipp-fast.
+- Selected backend and adapter preferences inspect reachable transitive packages
+  and enabled features as well as direct dependencies. For example, JWT crypto
+  should use the organization `jsonwebtoken-btls` provider with built-in
+  providers disabled; Flate2 should select zlib-rs without a second backend.
+  These are advisory findings, not independent-provider overlap failures.
 - Capability overlap checks are per workspace member and dependency role.
   They report individual provider pairs, excluding known complementary layers.
   A crate reachable only transitively is not treated as an independent direct

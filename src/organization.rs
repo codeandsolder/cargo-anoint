@@ -35,6 +35,8 @@ struct Capability {
 #[derive(Deserialize)]
 struct Preference {
     packages: Vec<String>,
+    #[serde(default)]
+    include_transitive: bool,
     preferred: String,
     notes: String,
 }
@@ -42,7 +44,10 @@ struct Preference {
 #[derive(Deserialize)]
 struct FeaturePreference {
     package: String,
-    preferred_feature: String,
+    #[serde(default)]
+    preferred_feature: Option<String>,
+    #[serde(default)]
+    include_transitive: bool,
     competing_features: Vec<String>,
     preferred: String,
     notes: String,
@@ -128,7 +133,9 @@ pub(crate) fn analyze(deps: &[ResolvedDep], package: Option<&str>) -> Vec<Sugges
 
     for preference in &policy.preferences {
         for name in &preference.packages {
-            if names.contains(name.as_str()) {
+            if names.contains(name.as_str())
+                || (preference.include_transitive && deps.iter().any(|dep| &dep.name == name))
+            {
                 results.push(finding(
                     name.clone(),
                     preference.preferred.clone(),
@@ -141,12 +148,13 @@ pub(crate) fn analyze(deps: &[ResolvedDep], package: Option<&str>) -> Vec<Sugges
     }
 
     for preference in &policy.feature_preferences {
-        for dep in &direct {
+        for dep in deps {
             if dep.name == preference.package
-                && dep
-                    .available_features
-                    .contains(&preference.preferred_feature)
-                && !dep.enabled_features.contains(&preference.preferred_feature)
+                && (dep.is_direct || preference.include_transitive)
+                && preference
+                    .preferred_feature
+                    .as_ref()
+                    .is_none_or(|feature| dep.available_features.contains(feature))
                 && preference
                     .competing_features
                     .iter()
@@ -285,5 +293,128 @@ mod tests {
             None
         )
         .is_empty());
+    }
+    #[test]
+    fn normalized_stack_detects_transitive_backends_and_adapters() {
+        let removed = [
+            "rouille",
+            "tiny_http",
+            "reqwest",
+            "ureq",
+            "ureq-proto",
+            "opendal-http-transport-reqwest",
+            "openssl",
+            "openssl-sys",
+            "native-tls",
+            "tokio-native-tls",
+            "hyper-tls",
+            "rustls",
+            "tokio-rustls",
+            "hyper-rustls",
+            "rustls-platform-verifier",
+            "rustls-webpki",
+            "aws-lc-rs",
+            "aws-lc-sys",
+            "ring",
+            "rsa",
+            "miniz_oxide",
+            "libmount",
+            "version-compare",
+            "h2",
+            "ruzstd",
+            "webpki-roots",
+        ];
+        let deps: Vec<_> = removed.iter().map(|name| dep(name, None, false)).collect();
+        let findings = analyze(&deps, Some("application"));
+        for name in removed {
+            assert!(findings.iter().any(|f| f.current == name), "missing {name}");
+        }
+        assert!(findings.iter().all(|f| !f.is_auto_fixable()));
+    }
+
+    #[test]
+    fn backend_feature_rules_detect_mixed_and_transitive_features() {
+        let mut flate = dep("flate2", None, false);
+        flate.available_features = vec!["zlib-rs".into(), "rust_backend".into()];
+        flate.enabled_features = flate.available_features.clone();
+        let mut jwt = dep("jsonwebtoken", None, false);
+        jwt.enabled_features = vec!["aws_lc_rs".into()];
+        let findings = analyze(&[flate.clone(), jwt.clone()], None);
+        for name in ["flate2", "jsonwebtoken"] {
+            assert!(findings
+                .iter()
+                .any(|f| f.current == name && f.kind == SuggestionKind::FeatureOptimization));
+        }
+        flate.enabled_features = vec!["zlib-rs".into()];
+        jwt.enabled_features.clear();
+        assert!(analyze(&[flate, jwt], None).is_empty());
+    }
+
+    #[test]
+    fn lru_and_dashboard_preferences() {
+        let mut leptos = dep("leptos_axum", None, false);
+        leptos.enabled_features = vec!["default".into()];
+        let findings = analyze(
+            &[
+                dep("linked-hash-map", None, true),
+                dep("chrono", None, true),
+                leptos,
+            ],
+            None,
+        );
+        for name in ["linked-hash-map", "chrono", "leptos_axum"] {
+            assert!(findings
+                .iter()
+                .any(|finding| finding.current == name && !finding.is_auto_fixable()));
+        }
+    }
+
+    #[test]
+    fn unused_format_features_have_conditional_recommendations() {
+        let mut jwt = dep("jsonwebtoken", None, false);
+        jwt.enabled_features = vec!["use_pem".into()];
+        let mut object = dep("object", None, false);
+        object.enabled_features = vec!["compression".into()];
+        let findings = analyze(&[jwt, object], None);
+        assert_eq!(findings.len(), 2);
+        assert!(findings
+            .iter()
+            .all(|f| f.kind == SuggestionKind::FeatureOptimization && !f.is_auto_fixable()));
+    }
+
+    #[test]
+    fn standalone_removed_wrapper_preferences() {
+        for name in [
+            "libmount",
+            "version-compare",
+            "ruzstd",
+            "h2",
+            "simple_asn1",
+            "webpki-roots",
+        ] {
+            assert!(analyze(&[dep(name, None, true)], None)
+                .iter()
+                .any(|f| f.current == name));
+        }
+        assert!(analyze(
+            &[dep(
+                "jsonwebtoken-btls",
+                Some("git+https://github.com/codeandsolder/btls-fast.git?rev=abc#abc"),
+                true
+            )],
+            None
+        )
+        .is_empty());
+        assert!(analyze(&[dep("http2", Some("git+https://github.com/codeandsolder/cargo-patches.git?tag=wreq-transport-v0.0.1#abc"), true)], None).is_empty());
+    }
+
+    #[test]
+    fn mount_wrappers_are_not_equivalent_to_every_syscall_binding() {
+        let findings = analyze(&[dep("nix", None, true), dep("rustix", None, true)], None);
+        assert!(findings.is_empty());
+        let findings = analyze(&[dep("nix", None, true), dep("libmount", None, true)], None);
+        assert!(findings
+            .iter()
+            .any(|f| f.kind == SuggestionKind::CapabilityOverlap));
     }
 }
