@@ -74,7 +74,13 @@
         "oxc_transformer",
         "oxc_isolated_declarations",
         "oxc_formatter",
-        "oxc_linter"
+        "oxc_linter",
+        "oxc_ast_macros",
+        "oxc_cfg",
+        "oxc_compat",
+        "oxc_data_structures",
+        "oxc_ecmascript",
+        "oxc_str"
       ]
     },
     {
@@ -140,6 +146,13 @@
         "reqsign-core",
         "reqsign-azure-storage",
         "reqsign-google"
+      ]
+    },
+    {
+      "repository": "rolldown-crates-redox",
+      "packages": [
+        "rolldown_redox",
+        "string_wizard"
       ]
     }
   ],
@@ -316,6 +329,35 @@
           "rustix"
         ]
       ]
+    },
+    {
+      "name": "Base64 codec",
+      "providers": [
+        "base64",
+        "base64-simd",
+        "data-encoding"
+      ],
+      "preferred": "one Base64 codec; prefer modern base64 where its format and throughput meet requirements",
+      "notes": "data-encoding may be needed for other encodings; preserve URL-safe, padding and canonical decode behavior and benchmark SIMD paths.",
+      "complementary_pairs": [
+        [
+          "base64",
+          "data-encoding"
+        ],
+        [
+          "base64-simd",
+          "data-encoding"
+        ]
+      ]
+    },
+    {
+      "name": "Fx hash implementation",
+      "providers": [
+        "fxhash",
+        "rustc-hash"
+      ],
+      "preferred": "rustc-hash",
+      "notes": "fxhash is unmaintained; check deterministic hash output and iteration order when migrating."
     }
   ],
   "preferences": [
@@ -461,6 +503,22 @@
       "preferred": "btls-fast RSA APIs for native consumers, including the shared Reqsign signing patch family",
       "notes": "Avoid a separate arbitrary-precision RSA signing backend when the application already uses BoringSSL. Reqsign core, Azure and Google must migrate as one family. For standalone, pure-Rust or WASM requirements evaluate the appropriate implementation rather than automatically replacing it.",
       "include_transitive": true
+    },
+    {
+      "packages": [
+        "base64-simd"
+      ],
+      "preferred": "base64 0.23 or newer compatible SIMD implementation",
+      "notes": "Compare vectorized source-map throughput and error semantics before migrating; do not change public format or padding behavior.",
+      "include_transitive": true
+    },
+    {
+      "packages": [
+        "nix"
+      ],
+      "preferred": "rustix for supported syscall APIs when already present",
+      "notes": "Do not force a wrapper migration when platform or syscall support differs. Use checked PID and flag conversions; preserve process-group and signal behavior.",
+      "include_transitive": true
     }
   ],
   "feature_preferences": [
@@ -505,6 +563,47 @@
       "preferred": "Disable object compression when only archive or executable metadata is required",
       "notes": "Compressed debug sections require decompression; do not disable it for consumers that actually read them. Avoid the default Ruzstd backend when not needed.",
       "include_transitive": true
+    },
+    {
+      "package": "mime_guess",
+      "competing_features": [
+        "rev-mappings"
+      ],
+      "preferred": "disable default reverse MIME mappings if only extension-to-MIME lookup is required",
+      "notes": "Keep the complete forward database; inspect consumers for get_mime_extensions and other reverse lookups.",
+      "include_transitive": true
+    }
+  ],
+  "version_families": [
+    {
+      "name": "wasm-tools release generation",
+      "members": [
+        {
+          "package": "wasmparser",
+          "version_component": 1
+        },
+        {
+          "package": "wasm-encoder",
+          "version_component": 1
+        },
+        {
+          "package": "wasmprinter",
+          "version_component": 1
+        },
+        {
+          "package": "wasm-smith",
+          "version_component": 1
+        },
+        {
+          "package": "wat",
+          "version_component": 1
+        },
+        {
+          "package": "wast",
+          "version_component": 0
+        }
+      ],
+      "notes": "Align compatible parser, encoder, printer, WAT and fuzz generator releases; independent upstream pins or distinct tool boundaries can justify a split."
     }
   ]
 }

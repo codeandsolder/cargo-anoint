@@ -490,5 +490,70 @@
     "migration_risk": "High",
     "autofix_safety": "ManualOnly",
     "evidence_source": "Heuristic"
+  },
+  {
+    "pattern": "fxhash",
+    "replacement": "rustc-hash",
+    "kind": "Unmaintained",
+    "reason": "fxhash is no longer maintained; rustc-hash is the RustSec-recommended successor. Check deterministic output and hash-table iteration order.",
+    "source": "https://rustsec.org/advisories/RUSTSEC-2025-0057.html",
+    "condition": null,
+    "confidence": "High",
+    "migration_risk": "Medium",
+    "autofix_safety": "ManualOnly",
+    "evidence_source": "RustSec",
+    "include_transitive": true
+  },
+  {
+    "pattern": "static_assertions",
+    "replacement": "const { assert!(...) } and native const assertions",
+    "kind": "StdReplacement",
+    "reason": "Const assertions cover many compile-time numeric, size and alignment checks without a macro dependency; trait/type-level and negative assertions may still need dedicated macros.",
+    "source": "Rust standard library and const evaluation",
+    "condition": "Only simple const-expressible assertions",
+    "confidence": "Medium",
+    "migration_risk": "Low",
+    "autofix_safety": "ManualOnly",
+    "evidence_source": "StdDocs",
+    "include_transitive": false
+  },
+  {
+    "pattern": "byteorder",
+    "replacement": "primitive from_le_bytes/from_be_bytes and to_le_bytes/to_be_bytes",
+    "kind": "StdReplacement",
+    "reason": "Primitive endian conversion plus Read::read_exact and Write::write_all covers common fixed-width numeric I/O. Preserve nonstandard widths and bulk conversions where needed.",
+    "source": "Rust primitive and std::io docs",
+    "condition": "Only fixed-width endian operations",
+    "confidence": "High",
+    "migration_risk": "Low",
+    "autofix_safety": "ManualOnly",
+    "evidence_source": "StdDocs",
+    "include_transitive": false
+  },
+  {
+    "pattern": "core_detect",
+    "replacement": "std::arch runtime feature-detection macros",
+    "kind": "ModernAlternative",
+    "reason": "For std targets, consider native architecture-specific feature-detection macros. Keep portable dispatch or no_std support if required.",
+    "source": "Rust std::arch docs",
+    "condition": "Only where native feature detection covers supported targets",
+    "confidence": "Medium",
+    "migration_risk": "Medium",
+    "autofix_safety": "ManualOnly",
+    "evidence_source": "StdDocs",
+    "include_transitive": false
+  },
+  {
+    "pattern": "cow-utils",
+    "replacement": "std::borrow::Cow plus native string operations",
+    "kind": "ModernAlternative",
+    "reason": "Simple no-change detection followed by standard string transforms can avoid a helper crate. Preserve Unicode semantics and avoid allocating unchanged strings.",
+    "source": "Rust std::borrow::Cow docs",
+    "condition": "Only when equivalent allocation behavior and Unicode semantics are verified",
+    "confidence": "Medium",
+    "migration_risk": "Medium",
+    "autofix_safety": "ManualOnly",
+    "evidence_source": "StdDocs",
+    "include_transitive": false
   }
 ]

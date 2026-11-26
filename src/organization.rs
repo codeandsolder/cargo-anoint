@@ -1,5 +1,5 @@
 //! Curated organization preferences and potential capability overlaps.
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Deserialize;
 
@@ -14,6 +14,8 @@ struct Policy {
     capabilities: Vec<Capability>,
     preferences: Vec<Preference>,
     feature_preferences: Vec<FeaturePreference>,
+    #[serde(default)]
+    version_families: Vec<VersionFamily>,
 }
 
 #[derive(Deserialize)]
@@ -51,6 +53,29 @@ struct FeaturePreference {
     competing_features: Vec<String>,
     preferred: String,
     notes: String,
+}
+
+#[derive(Deserialize)]
+struct VersionFamily {
+    name: String,
+    members: Vec<VersionFamilyMember>,
+    notes: String,
+}
+
+#[derive(Deserialize)]
+struct VersionFamilyMember {
+    package: String,
+    version_component: usize,
+}
+
+fn version_component(version: &str, component: usize) -> Option<u64> {
+    version
+        .split(['-', '+'])
+        .next()?
+        .split('.')
+        .nth(component)?
+        .parse()
+        .ok()
 }
 
 /// Cargo's resolved source is authoritative: repository metadata is often inherited
@@ -168,6 +193,62 @@ pub(crate) fn analyze(deps: &[ResolvedDep], package: Option<&str>) -> Vec<Sugges
                     package,
                 ));
             }
+        }
+    }
+
+    // Cargo metadata may include optional or target-specific packages. These
+    // findings describe the selected resolution, not guaranteed compiled units.
+    let mut versions = BTreeMap::<&str, BTreeSet<&str>>::new();
+    for dep in deps {
+        versions.entry(&dep.name).or_default().insert(&dep.version);
+    }
+    for (name, resolved) in &versions {
+        if resolved.len() > 1 {
+            let mut suggestion = finding(
+                (*name).to_owned(),
+                "one compatible resolved version where upstream constraints permit".into(),
+                format!("Multiple versions in the reachable Cargo resolution: {}. Inspect inverse dependency trees, enabled features and target/build/dev roles before consolidating; do not force incompatible APIs.", resolved.iter().copied().collect::<Vec<_>>().join(", ")),
+                SuggestionKind::ModernAlternative,
+                package,
+            );
+            suggestion.impact = Impact::Low;
+            results.push(suggestion);
+        }
+    }
+    for family in &policy.version_families {
+        let mut generations = BTreeMap::<u64, BTreeSet<String>>::new();
+        let mut members = BTreeSet::new();
+        for member in &family.members {
+            if let Some(resolved) = versions.get(member.package.as_str()) {
+                for version in resolved {
+                    if let Some(generation) = version_component(version, member.version_component) {
+                        generations
+                            .entry(generation)
+                            .or_default()
+                            .insert(format!("{}@{version}", member.package));
+                        members.insert(member.package.as_str());
+                    }
+                }
+            }
+        }
+        if generations.len() > 1 && members.len() > 1 {
+            let details = generations
+                .values()
+                .map(|group| group.iter().cloned().collect::<Vec<_>>().join(", "))
+                .collect::<Vec<_>>()
+                .join("; ");
+            let mut suggestion = finding(
+                members.into_iter().collect::<Vec<_>>().join("+"),
+                format!("one compatible {}", family.name),
+                format!(
+                    "Resolved release generations differ: {details}. {}",
+                    family.notes
+                ),
+                SuggestionKind::ModernAlternative,
+                package,
+            );
+            suggestion.impact = Impact::Low;
+            results.push(suggestion);
         }
     }
 
@@ -392,10 +473,32 @@ mod tests {
     #[test]
     fn mount_wrappers_are_not_equivalent_to_every_syscall_binding() {
         let findings = analyze(&[dep("nix", None, true), dep("rustix", None, true)], None);
-        assert!(findings.is_empty());
+        assert!(!findings
+            .iter()
+            .any(|f| f.kind == SuggestionKind::CapabilityOverlap));
         let findings = analyze(&[dep("nix", None, true), dep("libmount", None, true)], None);
         assert!(findings
             .iter()
             .any(|f| f.kind == SuggestionKind::CapabilityOverlap));
+    }
+    #[test]
+    fn reports_version_splits_without_gating_the_resolution() {
+        let mut old = dep("wasmparser", None, false);
+        old.version = "0.248.0".into();
+        let mut new = old.clone();
+        new.version = "0.263.0".into();
+        let mut wat = dep("wat", None, true);
+        wat.version = "1.263.0".into();
+        let mut wast = dep("wast", None, false);
+        wast.version = "263.0.0".into();
+        assert!(analyze(&[new.clone(), wat.clone(), wast.clone()], None).is_empty());
+        let findings = analyze(&[old, new, wat, wast], None);
+        assert_eq!(findings.len(), 2);
+        assert!(findings.iter().all(|f| f.impact == Impact::Low
+            && f.kind != SuggestionKind::CapabilityOverlap
+            && !f.is_auto_fixable()));
+        assert!(findings
+            .iter()
+            .any(|f| f.current == "wasmparser" && f.reason.contains("0.248.0")));
     }
 }
