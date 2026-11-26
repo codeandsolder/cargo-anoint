@@ -14,7 +14,7 @@ cargo test --locked
 
 ## Rules data
 
-Suggestions ship from the reviewed catalog `data/suggestions.json`. Use `cargo run -- --update-rules` to fetch and print candidate blessed.rs rules. Review candidates manually; do not merge live data into the catalog automatically. Local policy and project-preferred forks remain authoritative.
+Suggestions ship from the reviewed catalog `data/suggestions.json`. Use `cargo run -- anoint --update-rules` to fetch and print candidate blessed.rs rules. Review candidates manually; do not merge live data into the catalog automatically. Local policy and project-preferred forks remain authoritative.
 
 Validate candidate matches, replacement rationale, conditions, confidence and migration risk. Add regression tests for new policy behavior.
 
