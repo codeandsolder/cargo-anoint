@@ -545,74 +545,88 @@ fn parse_ignored_ranges(
 }
 
 fn collect_ignored_ranges(
-    node: Node<'_>,
+    root: Node<'_>,
     code: &[u8],
     include_tests: bool,
     hardcoded_path: Option<&Path>,
     ranges: &mut SourceMasks,
-) -> usize {
-    let kind = node.kind();
-    let span = (node.start_byte(), node.end_byte());
-    if let Some(path) = hardcoded_path {
-        inspect_literal(node, code, path, &mut ranges.hardcoded);
+) {
+    // Track the owning function by index rather than accumulating scores on
+    // the call stack. Nested functions get independent scores.
+    let mut pending = vec![(root, None)];
+    while let Some((node, mut function)) = pending.pop() {
+        let kind = node.kind();
+        let span = (node.start_byte(), node.end_byte());
+        if let Some(path) = hardcoded_path {
+            inspect_literal(node, code, path, &mut ranges.hardcoded);
+        }
+        if matches!(kind, "line_comment" | "block_comment") {
+            ranges.excluded.push(span);
+            continue;
+        }
+        if matches!(
+            kind,
+            "string_literal" | "raw_string_literal" | "char_literal"
+        ) {
+            ranges.literals.push(span);
+            continue;
+        }
+        if kind == "function_item" {
+            function = Some(ranges.functions.len());
+            ranges.functions.push(FunctionComplexity {
+                start: node.start_byte(),
+                score: 0,
+            });
+        }
+        if let Some(index) = function {
+            ranges.functions[index].score += decision_weight(node, code);
+        }
+        if kind == "expression_statement"
+            && node
+                .named_child(0)
+                .is_some_and(|expr| method_name(expr, code) == Some("ok"))
+        {
+            ranges.discarded_results.push(node.start_byte());
+        }
+        enqueue_children(
+            node,
+            code,
+            include_tests,
+            function,
+            &mut pending,
+            &mut ranges.excluded,
+        );
     }
-    if matches!(kind, "line_comment" | "block_comment") {
-        ranges.excluded.push(span);
-        return 0;
-    }
-    if matches!(
-        kind,
-        "string_literal" | "raw_string_literal" | "char_literal"
-    ) {
-        ranges.literals.push(span);
-        return 0;
-    }
+}
 
-    if kind == "expression_statement"
-        && node
-            .named_child(0)
-            .is_some_and(|expr| method_name(expr, code) == Some("ok"))
-    {
-        ranges.discarded_results.push(node.start_byte());
-    }
-    let mut score = decision_weight(node, code);
-    let mut cursor = node.walk();
-    if !include_tests && matches!(kind, "source_file" | "declaration_list" | "block") {
-        let mut test_only = false;
-        for child in node.named_children(&mut cursor) {
+fn enqueue_children<'tree>(
+    node: Node<'tree>,
+    code: &[u8],
+    include_tests: bool,
+    function: Option<usize>,
+    pending: &mut Vec<(Node<'tree>, Option<usize>)>,
+    excluded: &mut Vec<(usize, usize)>,
+) {
+    let filter_tests =
+        !include_tests && matches!(node.kind(), "source_file" | "declaration_list" | "block");
+    let mut test_only = false;
+    let start = pending.len();
+    for child in node.named_children(&mut node.walk()) {
+        if filter_tests {
             match child.kind() {
-                "attribute_item" => {
-                    test_only |= is_test_attr(child, code);
-                    collect_ignored_ranges(child, code, include_tests, hardcoded_path, ranges);
-                }
-                "line_comment" | "block_comment" => {
-                    ranges.excluded.push((child.start_byte(), child.end_byte()));
-                }
+                "attribute_item" => test_only |= is_test_attr(child, code),
+                "line_comment" | "block_comment" => {}
                 _ if test_only => {
-                    ranges.excluded.push((child.start_byte(), child.end_byte()));
+                    excluded.push((child.start_byte(), child.end_byte()));
                     test_only = false;
+                    continue;
                 }
-                _ => {
-                    score +=
-                        collect_ignored_ranges(child, code, include_tests, hardcoded_path, ranges)
-                }
+                _ => {}
             }
         }
-    } else {
-        for child in node.named_children(&mut cursor) {
-            score += collect_ignored_ranges(child, code, include_tests, hardcoded_path, ranges);
-        }
+        pending.push((child, function));
     }
-    if kind == "function_item" {
-        ranges.functions.push(FunctionComplexity {
-            start: node.start_byte(),
-            score,
-        });
-        // Nested functions are independent units, not part of their parent's score.
-        0
-    } else {
-        score
-    }
+    pending[start..].reverse();
 }
 
 fn decision_weight(node: Node<'_>, code: &[u8]) -> usize {
@@ -1003,6 +1017,23 @@ pub const fn other(x: u32) {
             .map(|finding| finding.line)
             .collect();
         assert_eq!(lines, vec![4]);
+        Ok(())
+    }
+
+    #[test]
+    fn deeply_nested_source_uses_iterative_traversal() -> Result<()> {
+        let depth = 4096;
+        let source = format!(
+            "fn f() {{ {} value().unwrap(); {} }}",
+            "{".repeat(depth),
+            "}".repeat(depth)
+        );
+        let findings = scan_code(&source, "lib.rs", &config())?;
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.kind == BullshitKind::UnwrapAbuse)
+        );
         Ok(())
     }
 

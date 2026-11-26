@@ -5,7 +5,8 @@
 //! tool continues with whatever data it has.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::fs;
 
@@ -119,6 +120,7 @@ impl IntelClient {
             && let Ok(contents) = fs::read_to_string(path).await
             && let Ok(entry) = serde_json::from_str::<CacheEntry<CrateIntel>>(&contents)
             && entry.is_fresh()
+            && entry.data.name == name
         {
             return Ok(entry.data);
         }
@@ -151,12 +153,11 @@ impl IntelClient {
             description: crate_data.description,
         };
 
-        // Write to cache (best-effort)
-        if let Some(path) = &cache_path {
-            let entry = CacheEntry::new(&intel);
-            if let Ok(json) = serde_json::to_string_pretty(&entry) {
-                let _ = fs::write(path, json).await;
-            }
+        // A failed cache write must not discard successful live data.
+        if let Some(path) = cache_path
+            && let Err(error) = write_cache_entry(path, &intel).await
+        {
+            eprintln!("Could not cache crate metadata for {name}: {error:#}");
         }
 
         Ok(intel)
@@ -183,6 +184,23 @@ impl IntelClient {
         }
         (intel, failed)
     }
+}
+
+async fn write_cache_entry(path: PathBuf, intel: &CrateIntel) -> Result<()> {
+    let bytes = serde_json::to_vec(&CacheEntry::new(intel))?;
+    // Creating, writing and persisting a named temporary file are one
+    // blocking transaction. Persist atomically replaces the destination,
+    // and RAII removes the temporary file if the transaction fails.
+    tokio::task::spawn_blocking(move || replace_cache_file(&path, &bytes)).await??;
+    Ok(())
+}
+
+fn replace_cache_file(path: &Path, bytes: &[u8]) -> Result<()> {
+    let parent = path.parent().context("cache path has no parent")?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    temporary.write_all(bytes)?;
+    temporary.persist(path).context("replace cache entry")?;
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -214,6 +232,21 @@ mod tests {
         assert_eq!(response.crate_data.updated_at, "2026-11-01T12:00:00Z");
         assert_eq!(response.crate_data.max_version, "1.2.3");
         assert_eq!(response.crate_data.recent_downloads, None);
+    }
+
+    #[test]
+    fn cache_replacement_preserves_existing_data_until_commit_and_cleans_tempfiles() -> Result<()> {
+        let dir = TempDir::new()?;
+        let path = dir.path().join("entry.json");
+        replace_cache_file(&path, b"old")?;
+        replace_cache_file(&path, b"new")?;
+        assert_eq!(fs::read(&path)?, b"new");
+        let target_directory = dir.path().join("directory");
+        fs::create_dir(&target_directory)?;
+        assert!(replace_cache_file(&target_directory, b"invalid destination").is_err());
+        assert!(target_directory.is_dir());
+        assert_eq!(fs::read_dir(dir.path())?.count(), 2);
+        Ok(())
     }
 
     #[test]
