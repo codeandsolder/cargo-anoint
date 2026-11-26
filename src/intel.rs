@@ -1,13 +1,13 @@
 //! Live intelligence layer — fetches metadata from crates.io and GitHub
 //! to assess freshness, popularity, and maintenance status.
 //!
-//! All network operations are **non-fatal**: failures are logged and the
+//! All network operations are **non-fatal** for the CLI: failures are reported and the
 //! tool continues with whatever data it has.
 
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::fs;
 use tokio::sync::Mutex;
 
 use anyhow::{Context, Result};
@@ -57,7 +57,8 @@ impl<T> CacheEntry<T> {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        now.saturating_sub(self.fetched_at) < CACHE_TTL_SECS
+        now.checked_sub(self.fetched_at)
+            .is_some_and(|age| age < CACHE_TTL_SECS)
     }
 
     fn new(data: T) -> Self {
@@ -83,7 +84,7 @@ impl IntelClient {
     ///
     /// # Errors
     /// Returns an error if the HTTP client cannot be constructed.
-    pub fn new() -> Result<Self> {
+    pub async fn new() -> Result<Self> {
         let http = wreq::Client::builder()
             .user_agent(USER_AGENT)
             .timeout(Duration::from_secs(10))
@@ -95,7 +96,7 @@ impl IntelClient {
             .filter(|path| !path.as_os_str().is_empty());
 
         if let Some(dir) = &cache_dir
-            && let Err(err) = fs::create_dir_all(dir)
+            && let Err(err) = fs::create_dir_all(dir).await
         {
             eprintln!(
                 "⚠️  Could not create cache directory at {}: {err}. Continuing without cache.",
@@ -130,7 +131,7 @@ impl IntelClient {
             .map(|dir| dir.join(format!("{name}.json")));
 
         if let Some(path) = &cache_path
-            && let Ok(contents) = fs::read_to_string(path)
+            && let Ok(contents) = fs::read_to_string(path).await
             && let Ok(entry) = serde_json::from_str::<CacheEntry<CrateIntel>>(&contents)
             && entry.is_fresh()
         {
@@ -170,9 +171,9 @@ impl IntelClient {
 
         // Write to cache (best-effort)
         if let Some(path) = &cache_path {
-            let entry = CacheEntry::new(intel.clone());
+            let entry = CacheEntry::new(&intel);
             if let Ok(json) = serde_json::to_string_pretty(&entry) {
-                let _ = fs::write(path, json);
+                let _ = fs::write(path, json).await;
             }
         }
 
@@ -206,8 +207,12 @@ impl IntelClient {
     }
 
     /// Fetch intel for all unique crate names, returning what we can get.
-    /// Failures for individual crates are silently skipped.
-    pub async fn fetch_bulk_intel(&self, crate_names: &[&str]) -> HashMap<String, CrateIntel> {
+    /// Return the number of unique requests that failed alongside successful results.
+    pub async fn fetch_bulk_intel(
+        &self,
+        crate_names: &[&str],
+    ) -> (HashMap<String, CrateIntel>, usize) {
+        let mut failed = 0;
         let mut intel = HashMap::new();
         let mut seen = HashSet::new();
         for name in crate_names.iter().map(|name| name.trim()) {
@@ -217,10 +222,10 @@ impl IntelClient {
             if let Ok(info) = self.fetch_crate_intel(name).await {
                 intel.insert(name.to_string(), info);
             } else {
-                // Non-fatal: skip this crate
+                failed += 1;
             }
         }
-        intel
+        (intel, failed)
     }
 }
 
@@ -281,6 +286,7 @@ pub fn parse_github_url(url: &str) -> Option<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use tempfile::TempDir;
 
     #[test]
@@ -346,6 +352,15 @@ mod tests {
     }
 
     #[test]
+    fn future_cache_entry_is_stale() {
+        let entry = CacheEntry {
+            data: (),
+            fetched_at: u64::MAX,
+        };
+        assert!(!entry.is_fresh());
+    }
+
+    #[test]
     fn test_cache_entry_roundtrip() {
         let intel = CrateIntel {
             name: "serde".into(),
@@ -395,7 +410,7 @@ mod tests {
     async fn test_fetch_bulk_intel() {
         let tmp = TempDir::new().unwrap();
 
-        let mut client = IntelClient::new().unwrap();
+        let mut client = IntelClient::new().await.unwrap();
         client.cache_dir = Some(tmp.path().to_path_buf());
 
         // Inject successful cache hit
@@ -413,12 +428,13 @@ mod tests {
         fs::write(tmp.path().join("test_success.json"), json).unwrap();
 
         // Fetch one that succeeds and one that fails (cache miss and fake crate)
-        let results = client
+        let (results, failed) = client
             .fetch_bulk_intel(&["test_success", "invalid/crate"])
             .await;
 
         // Validate
         assert_eq!(results.len(), 1);
+        assert_eq!(failed, 1);
         assert!(results.contains_key("test_success"));
         assert_eq!(results.get("test_success").unwrap().name, "test_success");
     }
@@ -427,7 +443,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_live_fetch_serde() {
-        let client = IntelClient::new().expect("client should init");
+        let client = IntelClient::new().await.expect("client should init");
         let intel = client
             .fetch_crate_intel("serde")
             .await
@@ -444,7 +460,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_live_github_serde() {
-        let client = IntelClient::new().expect("client should init");
+        let client = IntelClient::new().await.expect("client should init");
         let activity = client
             .fetch_github_activity("https://github.com/serde-rs/serde")
             .await

@@ -25,6 +25,7 @@ pub fn emit_feedback_stdout(
         .count();
     let project_root = manifest
         .and_then(Path::parent)
+        .filter(|p| !p.as_os_str().is_empty())
         .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
 
     let hotspots = top_hotspots(code_audit, &project_root, HOTSPOT_LIMIT);
@@ -56,14 +57,11 @@ fn hotspot_key(alert: &BullshitAlert, project_root: &Path) -> String {
 }
 
 fn display_path_under_root(path: &Path, project_root: &Path) -> String {
-    if let Ok(stripped) = path.strip_prefix(project_root) {
-        return normalize_path_sep(stripped);
-    }
     match (path.canonicalize(), project_root.canonicalize()) {
         (Ok(pa), Ok(pr)) => pa
             .strip_prefix(&pr)
-            .map_or_else(|_| normalize_path_sep(path), normalize_path_sep),
-        _ => normalize_path_sep(path),
+            .map_or_else(|_| "<outside-project>".to_owned(), normalize_path_sep),
+        _ => "<outside-project>".to_owned(),
     }
 }
 
@@ -89,11 +87,7 @@ fn top_hotspots(report: &CodeAuditReport, project_root: &Path, limit: usize) -> 
         *scores.entry(key).or_insert(0.0) += alert.severity;
     }
     let mut items: Vec<(String, f32)> = scores.into_iter().collect();
-    items.sort_by(|a, b| {
-        b.1.partial_cmp(&a.1)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.0.cmp(&b.0))
-    });
+    items.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     items.into_iter().take(limit).map(|(k, _)| k).collect()
 }
 

@@ -1363,6 +1363,43 @@ edition = "2021"
 }
 
 #[test]
+fn init_hooks_respects_configured_path_and_preserves_existing_hook() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let root = tmp.path();
+    assert!(
+        Command::new("git")
+            .current_dir(root)
+            .arg("init")
+            .status()
+            .expect("git init")
+            .success()
+    );
+    assert!(
+        Command::new("git")
+            .current_dir(root)
+            .args(["config", "core.hooksPath", "custom-hooks"])
+            .status()
+            .expect("git config")
+            .success()
+    );
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
+    cmd.current_dir(root).args(["anoint", "--init-hooks"]);
+    assert!(cmd.status().expect("install hook").success());
+    let path = root.join("custom-hooks/pre-commit");
+    let hook = std::fs::read_to_string(&path).expect("configured hook path");
+    assert!(hook.contains("cargo anoint bs --fail-on-confidence"));
+    std::fs::write(&path, "#!/bin/sh\n# existing hook\n").expect("existing hook");
+    let result = cmd.output().expect("second installation");
+    assert!(!result.status.success());
+    assert!(
+        std::fs::read_to_string(&path)
+            .expect("preserved hook")
+            .contains("# existing hook")
+    );
+}
+
+#[test]
 fn test_explain_flag_shows_rule_details() {
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("anoint").arg("--explain").arg("lazy_static");

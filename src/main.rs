@@ -284,13 +284,13 @@ impl DependencyScan {
                 return HashMap::new();
             }
 
-            if let Ok(client) = cargo_anoint::intel::IntelClient::new() {
+            if let Ok(client) = cargo_anoint::intel::IntelClient::new().await {
                 println!("{}", "🌐 Fetching live intelligence...".dimmed());
-                let result = client.fetch_bulk_intel(&crate_names).await;
-                if result.is_empty() && !crate_names.is_empty() {
+                let (result, failed) = client.fetch_bulk_intel(&crate_names).await;
+                if failed > 0 {
                     println!(
                         "{}",
-                        "⚠️  Live data unavailable (offline or rate-limited)"
+                        format!("⚠️  Live data unavailable for {failed} crate(s)")
                             .yellow()
                             .dimmed()
                     );
@@ -570,6 +570,34 @@ jobs:
           sarif_file: anoint-audit.sarif
 ";
 
+fn write_new_file(path: &Path, contents: &str, executable: bool) -> Result<()> {
+    use std::io::Write;
+
+    let parent = path.parent().context("file has no parent directory")?;
+    std::fs::create_dir_all(parent)
+        .with_context(|| format!("failed to create {}", parent.display()))?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(if executable { 0o755 } else { 0o644 });
+    }
+    #[cfg(not(unix))]
+    let _ = executable;
+    let mut file = match options.open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(error).with_context(|| format!("{} already exists", path.display()));
+        }
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to create {}", path.display()));
+        }
+    };
+    file.write_all(contents.as_bytes())
+        .with_context(|| format!("failed to write {}", path.display()))
+}
+
 fn run_init_ci(manifest_path: Option<&Path>) -> Result<()> {
     let base = manifest_path
         .and_then(Path::parent)
@@ -579,17 +607,7 @@ fn run_init_ci(manifest_path: Option<&Path>) -> Result<()> {
     let workflow_dir = base.join(".github").join("workflows");
     let workflow_path = workflow_dir.join("anoint.yml");
 
-    if workflow_path.exists() {
-        bail!(
-            "{} already exists — delete it first to regenerate.",
-            workflow_path.display()
-        );
-    }
-
-    std::fs::create_dir_all(&workflow_dir)
-        .with_context(|| format!("failed to create {}", workflow_dir.display()))?;
-    std::fs::write(&workflow_path, INIT_CI_WORKFLOW)
-        .with_context(|| format!("failed to write {}", workflow_path.display()))?;
+    write_new_file(&workflow_path, INIT_CI_WORKFLOW, false)?;
 
     println!("🙏 Created {}", workflow_path.display());
     println!("   Commit and push to enable cargo-anoint CI.");
@@ -606,42 +624,33 @@ fn run_init_ci(manifest_path: Option<&Path>) -> Result<()> {
 }
 
 fn run_init_hooks(manifest_path: Option<&Path>) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-
     let base = manifest_path
         .and_then(Path::parent)
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
 
-    let git_root_output = std::process::Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
+    let output = std::process::Command::new("git")
+        .args([
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "hooks/pre-commit",
+        ])
         .current_dir(base)
         .output()
-        .context("failed to run git rev-parse (is this a git repository?)")?;
-
-    if !git_root_output.status.success() {
-        bail!("not inside a git repository — cannot install a pre-commit hook");
-    }
-
-    let git_root = Path::new(std::str::from_utf8(&git_root_output.stdout)?.trim());
-    let hooks_dir = git_root.join(".git").join("hooks");
-    let hook_path = hooks_dir.join("pre-commit");
-
-    if hook_path.exists() {
-        bail!(
-            "{} already exists — delete it first to regenerate.",
-            hook_path.display()
-        );
-    }
-
-    std::fs::create_dir_all(&hooks_dir)
-        .with_context(|| format!("failed to create {}", hooks_dir.display()))?;
-
+        .context("failed to resolve Git hook path")?;
+    anyhow::ensure!(
+        output.status.success(),
+        "cannot resolve pre-commit hook: {}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    let path = std::str::from_utf8(&output.stdout)?;
+    let hook_path = Path::new(
+        path.strip_suffix('\n')
+            .context("invalid Git hook path response")?,
+    );
     let hook_script = "#!/bin/sh\ncargo anoint bs --fail-on-confidence 0.8\n";
-    std::fs::write(&hook_path, hook_script)
-        .with_context(|| format!("failed to write {}", hook_path.display()))?;
-    std::fs::set_permissions(&hook_path, std::fs::Permissions::from_mode(0o755))
-        .with_context(|| format!("failed to chmod {}", hook_path.display()))?;
+    write_new_file(hook_path, hook_script, true)?;
 
     println!("🙏 Created {}", hook_path.display());
     println!("   The hook runs `cargo anoint bs --fail-on-confidence 0.8` before each commit.");

@@ -38,7 +38,7 @@ Invoked as `cargo anoint …` once `cargo-anoint` is on your `PATH` (`cargo inst
 | `--all-targets` | Include `[dev-dependencies]` and `[build-dependencies]` in analysis (default: normal deps only). Also settable via `anoint.toml` `[settings].all_targets = true`. |
 | `--update-rules` | Fetch and print candidate blessed-derived rules for manual review. |
 | `--init-ci` | Write a starter GitHub Actions workflow to `.github/workflows/anoint.yml` and exit. |
-| `--init-hooks` | Write `.git/hooks/pre-commit` that runs `cargo anoint bs --fail-on-confidence 0.8` before each commit, and exit. |
+| `--init-hooks` | Write Git’s configured `hooks/pre-commit` that runs `cargo anoint bs --fail-on-confidence 0.8` before each commit, and exit. |
 | `--explain=PATTERN` | Show full details for a suggestion rule — kind, confidence, migration risk, reason, source. Fuzzy-matches on pattern name. Exits non-zero if no rule is found. |
 | `--policy=PATH` | Explicit **`anoint.toml`** (otherwise auto-discovered next to the manifest directory). |
 | `--verbose` | Dump every bullshit finding (text mode). |
