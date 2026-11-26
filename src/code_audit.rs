@@ -153,7 +153,7 @@ pub fn scan_project_with_options(
     options: AuditOptions,
 ) -> Result<ProjectAudit> {
     let diff_filter = if options.diff_only {
-        let base_dir = project_base_dir(manifest_path).canonicalize()?;
+        let base_dir = source_root(manifest_path)?;
         Some(DiffFilter::from_git_diff(&base_dir)?)
     } else {
         None
@@ -282,6 +282,28 @@ fn project_base_dir(manifest_path: Option<&Path>) -> &Path {
         .and_then(Path::parent)
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."))
+}
+
+/// Resolve the repository root for source locations, falling back to the
+/// manifest directory for standalone packages.
+/// # Errors
+/// Returns an error if the source root cannot be resolved to an absolute path.
+pub fn source_root(manifest_path: Option<&Path>) -> Result<PathBuf> {
+    let base = project_base_dir(manifest_path).canonicalize()?;
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(&base)
+        .args(["rev-parse", "--show-toplevel"])
+        .output();
+    if let Ok(output) = output
+        && output.status.success()
+    {
+        let path = std::str::from_utf8(&output.stdout)?
+            .strip_suffix('\n')
+            .context("invalid Git root response")?;
+        return Ok(Path::new(path).canonicalize()?);
+    }
+    Ok(base)
 }
 
 fn is_ignored_path(path: &Path, config: &CodeAuditConfig) -> bool {

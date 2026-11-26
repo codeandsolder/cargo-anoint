@@ -1,7 +1,7 @@
 //! Output layer — renders the modernization report to the terminal
 //! with colored output, emojis, and actionable links.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::BuildHasher;
 use std::path::Path;
 
@@ -454,6 +454,8 @@ struct SarifRoot {
 #[derive(Serialize)]
 struct SarifRun {
     tool: SarifTool,
+    #[serde(rename = "originalUriBaseIds")]
+    original_uri_base_ids: BTreeMap<&'static str, SarifArtifactLocation>,
     results: Vec<SarifResult>,
 }
 
@@ -504,8 +506,8 @@ struct SarifPhysicalLocation {
 #[derive(Serialize)]
 struct SarifArtifactLocation {
     uri: String,
-    #[serde(rename = "uriBaseId")]
-    uri_base_id: &'static str,
+    #[serde(rename = "uriBaseId", skip_serializing_if = "Option::is_none")]
+    uri_base_id: Option<&'static str>,
 }
 
 #[derive(Serialize)]
@@ -522,8 +524,31 @@ struct SarifMessage {
 /// Render SARIF to stdout.
 /// # Errors
 /// Returns serialization or output I/O errors.
-pub fn render_sarif(report: &CodeAuditReport) -> anyhow::Result<()> {
-    use std::collections::BTreeMap;
+pub fn render_sarif(report: &CodeAuditReport, root: &Path) -> anyhow::Result<()> {
+    write_json(&build_sarif(report, root)?)
+}
+
+fn sarif_location(path: &Path, root: &url::Url) -> anyhow::Result<SarifArtifactLocation> {
+    let absolute = url::Url::from_file_path(path).map_err(|()| {
+        anyhow::anyhow!(
+            "cannot represent source path as file URI: {}",
+            path.display()
+        )
+    })?;
+    let (uri, uri_base_id) = absolute.as_str().strip_prefix(root.as_str()).map_or_else(
+        || (absolute.to_string(), None),
+        |relative| (format!("./{relative}"), Some("%SRCROOT%")),
+    );
+    Ok(SarifArtifactLocation { uri, uri_base_id })
+}
+
+fn build_sarif(report: &CodeAuditReport, root: &Path) -> anyhow::Result<SarifRoot> {
+    let root = url::Url::from_directory_path(root).map_err(|()| {
+        anyhow::anyhow!(
+            "cannot represent source root as file URI: {}",
+            root.display()
+        )
+    })?;
 
     // Collect unique rule IDs for the driver rules table
     let mut rule_descriptions: BTreeMap<String, String> = BTreeMap::new();
@@ -546,9 +571,7 @@ pub fn render_sarif(report: &CodeAuditReport) -> anyhow::Result<()> {
         .alerts
         .iter()
         .map(|a| {
-            let file = a.file.to_string_lossy();
-            let uri = file.strip_prefix("./").unwrap_or(&file).to_string();
-            SarifResult {
+            Ok(SarifResult {
                 rule_id: format!("{:?}", a.kind),
                 level: "warning",
                 message: SarifMessage {
@@ -556,18 +579,15 @@ pub fn render_sarif(report: &CodeAuditReport) -> anyhow::Result<()> {
                 },
                 locations: vec![SarifLocation {
                     physical_location: SarifPhysicalLocation {
-                        artifact_location: SarifArtifactLocation {
-                            uri,
-                            uri_base_id: "%SRCROOT%",
-                        },
+                        artifact_location: sarif_location(&a.file, &root)?,
                         region: SarifRegion { start_line: a.line },
                     },
                 }],
-            }
+            })
         })
-        .collect();
+        .collect::<anyhow::Result<_>>()?;
 
-    let sarif = SarifRoot {
+    Ok(SarifRoot {
         version: "2.1.0",
         schema: "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
         runs: vec![SarifRun {
@@ -579,9 +599,34 @@ pub fn render_sarif(report: &CodeAuditReport) -> anyhow::Result<()> {
                     rules,
                 },
             },
+            original_uri_base_ids: BTreeMap::from([(
+                "%SRCROOT%",
+                SarifArtifactLocation {
+                    uri: root.to_string(),
+                    uri_base_id: None,
+                },
+            )]),
             results,
         }],
-    };
+    })
+}
 
-    write_json(&sarif)
+#[cfg(test)]
+mod sarif_tests {
+    use super::*;
+
+    #[test]
+    fn artifact_locations_are_encoded_and_external_paths_are_absolute() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let root = directory.path().canonicalize()?.join("source");
+        let base =
+            url::Url::from_directory_path(&root).map_err(|()| anyhow::anyhow!("test URI"))?;
+        let local = sarif_location(&root.join("żółć #.rs"), &base)?;
+        assert_eq!(local.uri_base_id, Some("%SRCROOT%"));
+        assert_eq!(local.uri, "./%C5%BC%C3%B3%C5%82%C4%87%20%23.rs");
+        let external = sarif_location(&root.with_file_name("source-other").join("lib.rs"), &base)?;
+        assert_eq!(external.uri_base_id, None);
+        assert!(external.uri.starts_with("file:"));
+        Ok(())
+    }
 }

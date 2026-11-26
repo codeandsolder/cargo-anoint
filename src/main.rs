@@ -484,7 +484,8 @@ fn run_code_audit_command(opts: &cli::CodeAuditOpts) -> Result<()> {
     let report = audit.report;
 
     if opts.sarif {
-        cargo_anoint::output::render_sarif(&report)?;
+        let root = cargo_anoint::code_audit::source_root(manifest)?;
+        cargo_anoint::output::render_sarif(&report, &root)?;
     } else if opts.json {
         let unified = cargo_anoint::output::JsonReportUnified {
             cargo_anoint_version: env!("CARGO_PKG_VERSION"),
