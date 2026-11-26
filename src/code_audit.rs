@@ -11,7 +11,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tree_sitter::{Node, Parser};
 
-use crate::bs_detector::{BSHit, HardcodedScanner};
+use crate::bs_detector::{BSHit, inspect_literal};
 
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
 
@@ -158,7 +158,6 @@ pub fn scan_project_with_options(
     } else {
         None
     };
-    let hardcoded_scanner = options.hardcoded.then(HardcodedScanner::new).transpose()?;
     let mut hardcoded_values = options.hardcoded.then(Vec::new);
     let mut files = source_files(manifest_path, config)?;
     if let Some(filter) = &diff_filter {
@@ -176,11 +175,14 @@ pub fn scan_project_with_options(
         );
         let code = fs::read_to_string(file)
             .with_context(|| format!("failed to read {}", file.display()))?;
-        let masks = parse_ignored_ranges(&code, config.include_tests)?;
+        let mut masks = parse_ignored_ranges(
+            &code,
+            config.include_tests,
+            options.hardcoded.then_some(file.as_path()),
+        )?;
         let mut file_alerts = scan_masked_code(&code, file, config, &masks)?;
-        if let (Some(scanner), Some(hits)) = (&hardcoded_scanner, &mut hardcoded_values) {
-            let source = mask_ranges(&code, masks.excluded.iter().copied())?;
-            let mut file_hits = scanner.scan(&source, file);
+        if let Some(hits) = &mut hardcoded_values {
+            let mut file_hits = std::mem::take(&mut masks.hardcoded);
             if let Some(filter) = &diff_filter {
                 file_hits.retain(|hit| filter.includes(file, hit.line));
             }
@@ -221,7 +223,7 @@ pub fn scan_code(
         return Ok(Vec::new());
     }
 
-    let masks = parse_ignored_ranges(code, config.include_tests)?;
+    let masks = parse_ignored_ranges(code, config.include_tests, None)?;
     scan_masked_code(code, &file, config, &masks)
 }
 
@@ -510,6 +512,7 @@ struct SourceMasks {
     literals: Vec<(usize, usize)>,
     functions: Vec<FunctionComplexity>,
     discarded_results: Vec<usize>,
+    hardcoded: Vec<BSHit>,
 }
 
 struct FunctionComplexity {
@@ -517,7 +520,11 @@ struct FunctionComplexity {
     score: usize,
 }
 
-fn parse_ignored_ranges(code: &str, include_tests: bool) -> Result<SourceMasks> {
+fn parse_ignored_ranges(
+    code: &str,
+    include_tests: bool,
+    hardcoded_path: Option<&Path>,
+) -> Result<SourceMasks> {
     let mut parser = Parser::new();
     parser
         .set_language(&tree_sitter_rust::LANGUAGE.into())
@@ -531,6 +538,7 @@ fn parse_ignored_ranges(code: &str, include_tests: bool) -> Result<SourceMasks> 
         tree.root_node(),
         code.as_bytes(),
         include_tests,
+        hardcoded_path,
         &mut ranges,
     );
     Ok(ranges)
@@ -540,10 +548,14 @@ fn collect_ignored_ranges(
     node: Node<'_>,
     code: &[u8],
     include_tests: bool,
+    hardcoded_path: Option<&Path>,
     ranges: &mut SourceMasks,
 ) -> usize {
     let kind = node.kind();
     let span = (node.start_byte(), node.end_byte());
+    if let Some(path) = hardcoded_path {
+        inspect_literal(node, code, path, &mut ranges.hardcoded);
+    }
     if matches!(kind, "line_comment" | "block_comment") {
         ranges.excluded.push(span);
         return 0;
@@ -571,7 +583,7 @@ fn collect_ignored_ranges(
             match child.kind() {
                 "attribute_item" => {
                     test_only |= is_test_attr(child, code);
-                    collect_ignored_ranges(child, code, include_tests, ranges);
+                    collect_ignored_ranges(child, code, include_tests, hardcoded_path, ranges);
                 }
                 "line_comment" | "block_comment" => {
                     ranges.excluded.push((child.start_byte(), child.end_byte()));
@@ -580,12 +592,15 @@ fn collect_ignored_ranges(
                     ranges.excluded.push((child.start_byte(), child.end_byte()));
                     test_only = false;
                 }
-                _ => score += collect_ignored_ranges(child, code, include_tests, ranges),
+                _ => {
+                    score +=
+                        collect_ignored_ranges(child, code, include_tests, hardcoded_path, ranges)
+                }
             }
         }
     } else {
         for child in node.named_children(&mut cursor) {
-            score += collect_ignored_ranges(child, code, include_tests, ranges);
+            score += collect_ignored_ranges(child, code, include_tests, hardcoded_path, ranges);
         }
     }
     if kind == "function_item" {
