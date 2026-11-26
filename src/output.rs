@@ -50,7 +50,7 @@ fn print_suggestion_detail<S: BuildHasher>(
     );
     println!(
         "   {confidence_tag} {risk_tag} {}",
-        format!("evidence: {}", evidence_label(&suggestion.evidence_source)).dimmed()
+        format!("evidence: {}", evidence_label(suggestion.evidence_source)).dimmed()
     );
     println!("   {}", suggestion.reason.dimmed());
     if let Some(condition) = &suggestion.condition {
@@ -155,7 +155,7 @@ pub fn render_packages_modernization<S: BuildHasher>(
     );
 }
 
-const fn suggestion_kind_slug(kind: &SuggestionKind) -> &'static str {
+const fn suggestion_kind_slug(kind: SuggestionKind) -> &'static str {
     match kind {
         SuggestionKind::ModernAlternative => "modern_alternative",
         SuggestionKind::FeatureOptimization => "feature_opt",
@@ -202,9 +202,7 @@ pub fn render_summary(scan_stats: &[(&str, usize, usize)], suggestions: &[&Sugge
 
     let mut kind_counts = HashMap::<&'static str, usize>::new();
     for s in suggestions {
-        *kind_counts
-            .entry(suggestion_kind_slug(&s.kind))
-            .or_default() += 1;
+        *kind_counts.entry(suggestion_kind_slug(s.kind)).or_default() += 1;
     }
     let mut kind_pairs: Vec<_> = kind_counts.into_iter().collect();
     kind_pairs.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
@@ -242,7 +240,7 @@ pub fn render_summary(scan_stats: &[(&str, usize, usize)], suggestions: &[&Sugge
     );
 }
 
-const fn evidence_label(source: &EvidenceSource) -> &'static str {
+const fn evidence_label(source: EvidenceSource) -> &'static str {
     match source {
         EvidenceSource::BlessedRs => "blessed.rs",
         EvidenceSource::RustSec => "RustSec",

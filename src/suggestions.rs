@@ -101,7 +101,7 @@ pub struct Rule {
 }
 
 /// Derive impact from suggestion kind.
-const fn impact_for(kind: &SuggestionKind) -> Impact {
+const fn impact_for(kind: SuggestionKind) -> Impact {
     match kind {
         SuggestionKind::Unmaintained | SuggestionKind::StdReplacement => Impact::High,
         SuggestionKind::ModernAlternative
@@ -132,6 +132,7 @@ pub fn load_rules() -> serde_json::Result<Vec<Rule>> {
 }
 
 /// Analyze resolved dependencies against the reviewed rules and organization catalog.
+///
 /// Single and combo patterns match exact package names. Transitive matching is
 /// opt-in per rule. Conditions are human-review requirements, not executable
 /// predicates or claims about source usage.
@@ -168,7 +169,7 @@ pub fn analyze(
                 reason: rule.reason.clone(),
                 condition: rule.condition.clone(),
                 source: rule.source.clone(),
-                impact: impact_for(&rule.kind),
+                impact: impact_for(rule.kind),
                 confidence: rule.confidence,
                 migration_risk: rule.migration_risk,
                 evidence_source: rule.evidence_source,
@@ -416,17 +417,14 @@ mod tests {
 
     #[test]
     fn test_impact_derivation() {
-        assert_eq!(impact_for(&SuggestionKind::Unmaintained), Impact::High);
-        assert_eq!(impact_for(&SuggestionKind::StdReplacement), Impact::High);
+        assert_eq!(impact_for(SuggestionKind::Unmaintained), Impact::High);
+        assert_eq!(impact_for(SuggestionKind::StdReplacement), Impact::High);
         assert_eq!(
-            impact_for(&SuggestionKind::ModernAlternative),
+            impact_for(SuggestionKind::ModernAlternative),
             Impact::Medium
         );
-        assert_eq!(impact_for(&SuggestionKind::ComboWin), Impact::Medium);
-        assert_eq!(
-            impact_for(&SuggestionKind::FeatureOptimization),
-            Impact::Low
-        );
+        assert_eq!(impact_for(SuggestionKind::ComboWin), Impact::Medium);
+        assert_eq!(impact_for(SuggestionKind::FeatureOptimization), Impact::Low);
     }
     #[test]
     fn unmaintained_fxhash_is_reported_transitively() {
