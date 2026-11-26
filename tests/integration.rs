@@ -1370,22 +1370,24 @@ fn init_hooks_respects_configured_path_and_preserves_existing_hook() {
         Command::new("git")
             .current_dir(root)
             .arg("init")
-            .status()
+            .output()
             .expect("git init")
+            .status
             .success()
     );
     assert!(
         Command::new("git")
             .current_dir(root)
             .args(["config", "core.hooksPath", "custom-hooks"])
-            .status()
+            .output()
             .expect("git config")
+            .status
             .success()
     );
 
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.current_dir(root).args(["anoint", "--init-hooks"]);
-    assert!(cmd.status().expect("install hook").success());
+    assert!(cmd.output().expect("install hook").status.success());
     let path = root.join("custom-hooks/pre-commit");
     let hook = std::fs::read_to_string(&path).expect("configured hook path");
     assert!(hook.contains("cargo anoint bs --fail-on-confidence"));

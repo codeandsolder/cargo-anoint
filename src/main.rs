@@ -275,39 +275,38 @@ impl DependencyScan {
     }
 
     async fn fetch_intel(&self) -> HashMap<String, cargo_anoint::intel::CrateIntel> {
-        if !self.offline {
-            let crate_names: Vec<&str> = self
-                .suggestions()
-                .flat_map(|s| s.current.split('+'))
-                .collect();
-            if crate_names.is_empty() {
-                return HashMap::new();
-            }
+        if self.offline {
+            return HashMap::new();
+        }
+        let crate_names: Vec<&str> = self
+            .suggestions()
+            .flat_map(|s| s.current.split('+'))
+            .collect();
+        if crate_names.is_empty() {
+            return HashMap::new();
+        }
 
-            if let Ok(client) = cargo_anoint::intel::IntelClient::new().await {
-                println!("{}", "🌐 Fetching live intelligence...".dimmed());
-                let (result, failed) = client.fetch_bulk_intel(&crate_names).await;
-                if failed > 0 {
-                    println!(
-                        "{}",
-                        format!("⚠️  Live data unavailable for {failed} crate(s)")
-                            .yellow()
-                            .dimmed()
-                    );
-                }
-                println!();
-                result
-            } else {
+        if let Ok(client) = cargo_anoint::intel::IntelClient::new().await {
+            println!("{}", "🌐 Fetching live intelligence...".dimmed());
+            let (result, failed) = client.fetch_bulk_intel(&crate_names).await;
+            if failed > 0 {
                 println!(
                     "{}",
-                    "⚠️  Could not initialize live intelligence (continuing without)"
+                    format!("⚠️  Live data unavailable for {failed} crate(s)")
                         .yellow()
                         .dimmed()
                 );
-                println!();
-                HashMap::new()
             }
+            println!();
+            result
         } else {
+            println!(
+                "{}",
+                "⚠️  Could not initialize live intelligence (continuing without)"
+                    .yellow()
+                    .dimmed()
+            );
+            println!();
             HashMap::new()
         }
     }
