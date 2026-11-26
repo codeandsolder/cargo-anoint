@@ -12,7 +12,7 @@ fn dependency(name: &str, direct: bool) -> ResolvedDep {
         available_features: vec![],
         source: None,
         repository: None,
-        is_direct: direct,
+
         direct_kinds: if direct {
             vec![DependencyKind::Normal]
         } else {

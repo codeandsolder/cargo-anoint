@@ -20,8 +20,15 @@ pub struct ResolvedDep {
     pub available_features: Vec<String>,
     pub source: Option<String>,
     pub repository: Option<String>,
-    pub is_direct: bool,
     pub direct_kinds: Vec<DependencyKind>,
+}
+
+impl ResolvedDep {
+    /// Whether the selected package declares this dependency in an included role.
+    #[must_use]
+    pub fn is_direct(&self) -> bool {
+        !self.direct_kinds.is_empty()
+    }
 }
 
 /// One Cargo package in the workspace (or the resolved root crate) plus its dependency tree.
@@ -37,7 +44,7 @@ pub struct PackageResult {
 
 impl fmt::Display for ResolvedDep {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let tag = if self.is_direct {
+        let tag = if self.is_direct() {
             "direct"
         } else {
             "transitive"
@@ -167,8 +174,13 @@ fn fetch_metadata_and_snapshots(
     let workspace_packages_ordered: Vec<&Package> = metadata
         .workspace_members
         .iter()
-        .filter_map(|id| metadata.packages.iter().find(|p| &p.id == id))
-        .collect();
+        .map(|id| {
+            pkg_map
+                .get(id)
+                .copied()
+                .ok_or_else(|| anyhow::anyhow!("Workspace member {id} missing from metadata"))
+        })
+        .collect::<Result<_>>()?;
 
     let resolve_workspace_root_pkg = || -> Result<&Package> {
         let root_id = resolve
@@ -262,31 +274,37 @@ fn resolve_deps_for_root(
         .get(root_pkg_id)
         .ok_or_else(|| anyhow::anyhow!("Root node missing in resolve.nodes"))?;
 
-    let direct_dep_ids: HashSet<&PackageId> = root_node
-        .deps
-        .iter()
-        .filter(|d| all_targets || d.dep_kinds.iter().any(|k| k.kind == DependencyKind::Normal))
-        .map(|d| &d.pkg)
-        .collect();
+    let mut direct_roles: HashMap<&PackageId, Vec<DependencyKind>> = HashMap::new();
+    for edge in &root_node.deps {
+        for kind in edge.dep_kinds.iter().map(|kind| kind.kind) {
+            if all_targets || kind == DependencyKind::Normal {
+                let roles = direct_roles.entry(&edge.pkg).or_default();
+                if !roles.contains(&kind) {
+                    roles.push(kind);
+                }
+            }
+        }
+    }
 
     let mut reachable = HashSet::new();
-    let mut pending: Vec<_> = direct_dep_ids.iter().copied().collect();
+    let mut pending: Vec<_> = direct_roles.keys().copied().collect();
     while let Some(id) = pending.pop() {
         if !reachable.insert(id) {
             continue;
         }
-        if let Some(node) = node_map.get(&id) {
-            pending.extend(
-                node.deps
-                    .iter()
-                    .filter(|d| {
-                        d.dep_kinds
-                            .iter()
-                            .any(|k| k.kind != DependencyKind::Development)
-                    })
-                    .map(|d| &d.pkg),
-            );
-        }
+        let node = node_map
+            .get(id)
+            .ok_or_else(|| anyhow::anyhow!("Reachable dependency {id} missing from resolution"))?;
+        pending.extend(
+            node.deps
+                .iter()
+                .filter(|d| {
+                    d.dep_kinds
+                        .iter()
+                        .any(|k| k.kind != DependencyKind::Development)
+                })
+                .map(|d| &d.pkg),
+        );
     }
 
     let mut deps = Vec::new();
@@ -296,11 +314,9 @@ fn resolve_deps_for_root(
             continue;
         }
 
-        let Some(pkg) = pkg_map.get(&node.id) else {
-            continue;
-        };
-
-        let is_direct = direct_dep_ids.contains(&node.id);
+        let pkg = pkg_map
+            .get(&node.id)
+            .ok_or_else(|| anyhow::anyhow!("Resolved package {} missing from metadata", node.id))?;
 
         let enabled_features = node.features.clone();
 
@@ -313,15 +329,7 @@ fn resolve_deps_for_root(
             available_features,
             source: pkg.source.as_ref().map(std::string::ToString::to_string),
             repository: pkg.repository.clone(),
-            is_direct,
-            direct_kinds: root_node
-                .deps
-                .iter()
-                .filter(|edge| edge.pkg == node.id)
-                .flat_map(|edge| edge.dep_kinds.iter())
-                .filter(|kind| all_targets || kind.kind == DependencyKind::Normal)
-                .map(|kind| kind.kind)
-                .collect(),
+            direct_kinds: direct_roles.remove(&node.id).unwrap_or_default(),
         });
     }
 

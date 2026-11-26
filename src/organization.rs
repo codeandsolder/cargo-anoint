@@ -134,7 +134,7 @@ fn finding(
 
 pub fn analyze(deps: &[ResolvedDep], package: Option<&str>) -> serde_json::Result<Vec<Suggestion>> {
     let policy: Policy = serde_json::from_str(include_str!("../data/organization.json"))?;
-    let direct: Vec<_> = deps.iter().filter(|dep| dep.is_direct).collect();
+    let direct: Vec<_> = deps.iter().filter(|dep| dep.is_direct()).collect();
     let mut results = Vec::new();
     append_fork_findings(&policy.forks, deps, package, &mut results);
     append_preference_findings(&policy, deps, package, &mut results);
@@ -154,7 +154,11 @@ fn append_fork_findings(
             let sources: BTreeSet<_> = deps
                 .iter()
                 .filter(|dep| &dep.name == name)
-                .filter_map(|dep| dep.source.as_deref().map(|source| (dep.is_direct, source)))
+                .filter_map(|dep| {
+                    dep.source
+                        .as_deref()
+                        .map(|source| (dep.is_direct(), source))
+                })
                 .filter(|(_, source)| !preferred_source(source, &fork.repository))
                 .map(|(direct, source)| {
                     format!("{}: {source}", if direct { "direct" } else { "transitive" })
@@ -183,7 +187,7 @@ fn append_preference_findings(
         for name in &preference.packages {
             if deps.iter().any(|dep| {
                 &dep.name == name
-                    && (dep.is_direct || preference.include_transitive)
+                    && (dep.is_direct() || preference.include_transitive)
                     && !preference
                         .satisfied_repository
                         .as_ref()
@@ -207,7 +211,7 @@ fn append_preference_findings(
     for preference in &policy.feature_preferences {
         for dep in deps {
             if dep.name == preference.package
-                && (dep.is_direct || preference.include_transitive)
+                && (dep.is_direct() || preference.include_transitive)
                 && preference
                     .preferred_feature
                     .as_ref()
@@ -361,7 +365,7 @@ mod tests {
             available_features: vec![],
             source: source.map(str::to_owned),
             repository: Some("https://github.com/upstream/project".into()),
-            is_direct: direct,
+
             direct_kinds: if direct {
                 vec![cargo_metadata::DependencyKind::Normal]
             } else {

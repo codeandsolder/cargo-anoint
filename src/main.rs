@@ -41,7 +41,7 @@ fn unique_direct_registry_dependency_versions<'a>(
     snapshots
         .flat_map(|snapshot| snapshot.deps.iter())
         .filter(|dependency| {
-            dependency.is_direct
+            dependency.is_direct()
                 && matches!(
                     dependency.source.as_deref(),
                     Some(
@@ -208,7 +208,7 @@ impl DependencyScan {
             .map(|s| {
                 (
                     s.name.as_str(),
-                    s.deps.iter().filter(|d| d.is_direct).count(),
+                    s.deps.iter().filter(|d| d.is_direct()).count(),
                     s.deps.len(),
                 )
             })
@@ -350,7 +350,7 @@ fn print_dependency_summary(snapshots: &[&cargo_anoint::parser::PackageResult]) 
 
     if let [snap] = snapshots {
         let deps = &snap.deps;
-        let direct: Vec<_> = deps.iter().filter(|d| d.is_direct).collect();
+        let direct: Vec<_> = deps.iter().filter(|d| d.is_direct()).collect();
         let transitive_count = deps.len() - direct.len();
 
         println!(
@@ -385,7 +385,7 @@ fn print_dependency_summary(snapshots: &[&cargo_anoint::parser::PackageResult]) 
         );
     } else {
         for snap in snapshots {
-            let direct = snap.deps.iter().filter(|d| d.is_direct).count();
+            let direct = snap.deps.iter().filter(|d| d.is_direct()).count();
             let total = snap.deps.len();
             println!(
                 "  {} {} v{} — {direct} direct, {total} total ({})",
@@ -398,7 +398,7 @@ fn print_dependency_summary(snapshots: &[&cargo_anoint::parser::PackageResult]) 
         println!();
         let total_direct: usize = snapshots
             .iter()
-            .map(|s| s.deps.iter().filter(|d| d.is_direct).count())
+            .map(|s| s.deps.iter().filter(|d| d.is_direct()).count())
             .sum();
         let total_all: usize = snapshots.iter().map(|s| s.deps.len()).sum();
         println!(
@@ -420,7 +420,7 @@ fn run_feedback_command(opts: &cli::AnointOpts) -> Result<()> {
     let code_audit_config = cargo_anoint::code_audit::config_from_policy(policy.as_ref());
 
     let deps = cargo_anoint::parser::get_deps(manifest)?;
-    let direct_count = deps.iter().filter(|d| d.is_direct).count();
+    let direct_count = deps.iter().filter(|d| d.is_direct()).count();
 
     let rules = cargo_anoint::suggestions::load_rules()?;
     let suggestions = apply_policy(

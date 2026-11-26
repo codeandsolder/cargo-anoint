@@ -145,7 +145,7 @@ pub fn analyze(
 ) -> serde_json::Result<Vec<Suggestion>> {
     let direct_names: HashSet<&str> = deps
         .iter()
-        .filter(|d| d.is_direct)
+        .filter(|d| d.is_direct())
         .map(|d| d.name.as_str())
         .collect();
 
@@ -212,7 +212,7 @@ mod tests {
                 available_features: vec![],
                 source: Some("registry".into()),
                 repository: None,
-                is_direct: true,
+
                 direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
             ResolvedDep {
@@ -222,7 +222,7 @@ mod tests {
                 available_features: vec![],
                 source: Some("registry".into()),
                 repository: None,
-                is_direct: true,
+
                 direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
         ];
@@ -244,7 +244,7 @@ mod tests {
                 available_features: vec![],
                 source: Some("registry".into()),
                 repository: None,
-                is_direct: true,
+
                 direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
             ResolvedDep {
@@ -254,7 +254,7 @@ mod tests {
                 available_features: vec![],
                 source: Some("registry".into()),
                 repository: None,
-                is_direct: true,
+
                 direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
         ];
@@ -302,7 +302,7 @@ mod tests {
             available_features: vec![],
             source: Some("registry".into()),
             repository: None,
-            is_direct: true,
+
             direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
         }];
 
@@ -325,7 +325,7 @@ mod tests {
             available_features: vec![],
             source: Some("registry".into()),
             repository: None,
-            is_direct: false,
+
             direct_kinds: vec![], // transitive — should be ignored
         }];
 
@@ -347,7 +347,7 @@ mod tests {
                 available_features: vec![],
                 source: Some("registry".into()),
                 repository: None,
-                is_direct: true,
+
                 direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
             ResolvedDep {
@@ -357,7 +357,7 @@ mod tests {
                 available_features: vec![],
                 source: Some("registry".into()),
                 repository: None,
-                is_direct: true,
+
                 direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
             ResolvedDep {
@@ -367,7 +367,7 @@ mod tests {
                 available_features: vec![],
                 source: Some("registry".into()),
                 repository: None,
-                is_direct: true,
+
                 direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
         ];
@@ -393,7 +393,7 @@ mod tests {
                 available_features: vec![],
                 source: Some("registry".into()),
                 repository: None,
-                is_direct: true,
+
                 direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
             ResolvedDep {
@@ -403,7 +403,7 @@ mod tests {
                 available_features: vec![],
                 source: Some("registry".into()),
                 repository: None,
-                is_direct: true,
+
                 direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
         ];
@@ -435,7 +435,7 @@ mod tests {
             available_features: vec![],
             source: None,
             repository: None,
-            is_direct: false,
+
             direct_kinds: vec![],
         };
         let findings = analyze(&[dep], &load_rules().expect("embedded rules"), None)
