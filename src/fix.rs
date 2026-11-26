@@ -5,14 +5,14 @@
 //! - `.bak` backup before any writes  
 //! - `--dry-run` previews the diff without touching files
 //! - Only direct dependency edits (never transitive)
-//! - Only auto-fixable suggestion types (StdReplacement, Unmaintained, FeatureOptimization)
+//! - Only auto-fixable suggestion types (`StdReplacement`, Unmaintained, `FeatureOptimization`)
 
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
 
 use anyhow::{Context, Result};
-use colored::*;
+use colored::Colorize;
 use toml_edit::{DocumentMut, Item, Value};
 
 use crate::suggestions::{Suggestion, SuggestionKind};
@@ -29,6 +29,9 @@ pub struct FixResult {
 /// - Creates a `.bak` backup before any edits.
 /// - Uses `toml_edit` to preserve comments and formatting.
 /// - If `dry_run` is true, prints the diff but writes nothing.
+///
+/// # Errors
+/// Returns an error when the manifest cannot be read, parsed, backed up, or written.
 pub fn apply(suggestions: &[Suggestion], manifest_path: &Path, dry_run: bool) -> Result<FixResult> {
     let fixable: Vec<&Suggestion> = suggestions.iter().filter(|s| s.is_auto_fixable()).collect();
 
@@ -62,7 +65,7 @@ pub fn apply(suggestions: &[Suggestion], manifest_path: &Path, dry_run: bool) ->
         match apply_single(&mut doc, suggestion) {
             Ok(desc) => applied.push(desc),
             Err(e) => {
-                skipped.push(format!("{}: {}", suggestion.current, e));
+                skipped.push(format!("{}: {e}", suggestion.current));
             }
         }
     }
@@ -91,15 +94,7 @@ pub fn apply(suggestions: &[Suggestion], manifest_path: &Path, dry_run: bool) ->
             println!();
             println!("{}", "Changes that would be applied:".bold());
             for desc in &applied {
-                println!("  {} {}", "✓".green(), desc);
-            }
-        }
-
-        if !skipped.is_empty() {
-            println!();
-            println!("{}", "Skipped (manual action needed):".dimmed());
-            for desc in &skipped {
-                println!("  {} {}", "–".dimmed(), desc.dimmed());
+                println!("  {} {desc}", "✓".green());
             }
         }
     } else {
@@ -136,16 +131,16 @@ pub fn apply(suggestions: &[Suggestion], manifest_path: &Path, dry_run: bool) ->
         if !applied.is_empty() {
             println!("{}", "Applied fixes:".bold().green());
             for desc in &applied {
-                println!("  {} {}", "✓".green(), desc);
+                println!("  {} {desc}", "✓".green());
             }
         }
+    }
 
-        if !skipped.is_empty() {
-            println!();
-            println!("{}", "Skipped (manual action needed):".dimmed());
-            for desc in &skipped {
-                println!("  {} {}", "–".dimmed(), desc.dimmed());
-            }
+    if !skipped.is_empty() {
+        println!();
+        println!("{}", "Skipped (manual action needed):".dimmed());
+        for desc in &skipped {
+            println!("  {} {}", "–".dimmed(), desc.dimmed());
         }
     }
 
@@ -216,46 +211,44 @@ fn apply_single(doc: &mut DocumentMut, suggestion: &Suggestion) -> Result<String
     }
 }
 
-/// Remove a dependency (StdReplacement: crate replaced by std).
+/// Remove a dependency (`StdReplacement`: crate replaced by std).
 /// Searches [dependencies], [dev-dependencies], and [build-dependencies].
 fn apply_remove(doc: &mut DocumentMut, crate_name: &str, replacement: &str) -> Result<String> {
     for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
-        if let Some(deps) = doc.get_mut(section).and_then(|d| d.as_table_like_mut()) {
-            if deps.remove(crate_name).is_some() {
-                return Ok(format!(
-                    "Removed `{}` from [{}] (use {} instead)",
-                    crate_name, section, replacement
-                ));
-            }
+        if let Some(deps) = doc.get_mut(section).and_then(|d| d.as_table_like_mut())
+            && deps.remove(crate_name).is_some()
+        {
+            return Ok(format!(
+                "Removed `{crate_name}` from [{section}] (use {replacement} instead)"
+            ));
         }
     }
-    anyhow::bail!("`{}` not found in any dependency section", crate_name)
+    anyhow::bail!("`{crate_name}` not found in any dependency section")
 }
 
 /// Rename a dependency (Unmaintained: swap to maintained fork).
 /// Searches [dependencies], [dev-dependencies], and [build-dependencies].
 fn apply_rename(doc: &mut DocumentMut, old_name: &str, new_name: &str) -> Result<String> {
     for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
-        if let Some(deps) = doc.get_mut(section).and_then(|d| d.as_table_like_mut()) {
-            if let Some(old_item) = deps.remove(old_name) {
-                deps.insert(new_name, old_item);
-                return Ok(format!(
-                    "Renamed `{}` → `{}` in [{}]",
-                    old_name, new_name, section
-                ));
-            }
+        if let Some(deps) = doc.get_mut(section).and_then(|d| d.as_table_like_mut())
+            && let Some(old_item) = deps.remove(old_name)
+        {
+            deps.insert(new_name, old_item);
+            return Ok(format!(
+                "Renamed `{old_name}` → `{new_name}` in [{section}]"
+            ));
         }
     }
-    anyhow::bail!("`{}` not found in any dependency section", old_name)
+    anyhow::bail!("`{old_name}` not found in any dependency section")
 }
 
 /// Feature optimization: remove extra dep, add feature to the main dep.
 /// Searches [dependencies], [dev-dependencies], and [build-dependencies].
-/// Pattern format: "main_crate+extra_crate" → "main_crate with \"feature\" feature"
+/// Pattern format: "`main_crate+extra_crate`" → "`main_crate` with \"feature\" feature"
 fn apply_feature_opt(doc: &mut DocumentMut, pattern: &str, recommended: &str) -> Result<String> {
     let parts: Vec<&str> = pattern.split('+').collect();
     if parts.len() != 2 {
-        anyhow::bail!("expected pattern format 'crate1+crate2', got '{}'", pattern);
+        anyhow::bail!("expected pattern format 'crate1+crate2', got '{pattern}'");
     }
 
     let main_crate = parts[0].trim();
@@ -263,43 +256,37 @@ fn apply_feature_opt(doc: &mut DocumentMut, pattern: &str, recommended: &str) ->
 
     // Parse the feature name from recommended text (e.g. 'reqwest with "json" feature')
     let feature_name = extract_feature_name(recommended)
-        .ok_or_else(|| anyhow::anyhow!("could not parse feature name from '{}'", recommended))?;
+        .ok_or_else(|| anyhow::anyhow!("could not parse feature name from '{recommended}'"))?;
 
     let sections = ["dependencies", "dev-dependencies", "build-dependencies"];
 
     // Find the extra crate in any section and remove it
     let mut extra_removed_section = None;
     for section in &sections {
-        if let Some(deps) = doc.get_mut(section).and_then(|d| d.as_table_like_mut()) {
-            if deps.remove(extra_crate).is_some() {
-                extra_removed_section = Some(*section);
-                break;
-            }
+        if let Some(deps) = doc.get_mut(section).and_then(|d| d.as_table_like_mut())
+            && deps.remove(extra_crate).is_some()
+        {
+            extra_removed_section = Some(*section);
+            break;
         }
     }
 
-    if extra_removed_section.is_none() {
-        anyhow::bail!("`{}` not found in any dependency section", extra_crate);
-    }
+    let extra_removed_section = extra_removed_section
+        .ok_or_else(|| anyhow::anyhow!("`{extra_crate}` not found in any dependency section"))?;
 
     // Find the main crate in any section and add the feature
     for section in &sections {
-        if let Some(deps) = doc.get_mut(section).and_then(|d| d.as_table_like_mut()) {
-            if deps.get(main_crate).is_some() {
-                add_feature_to_dep(deps, main_crate, &feature_name)?;
-                return Ok(format!(
-                    "Removed `{}` from [{}], enabled `{}` feature on `{}` in [{}]",
-                    extra_crate,
-                    extra_removed_section.unwrap(),
-                    feature_name,
-                    main_crate,
-                    section
-                ));
-            }
+        if let Some(deps) = doc.get_mut(section).and_then(|d| d.as_table_like_mut())
+            && deps.get(main_crate).is_some()
+        {
+            add_feature_to_dep(deps, main_crate, &feature_name)?;
+            return Ok(format!(
+                "Removed `{extra_crate}` from [{extra_removed_section}], enabled `{feature_name}` feature on `{main_crate}` in [{section}]"
+            ));
         }
     }
 
-    anyhow::bail!("`{}` not found in any dependency section", main_crate)
+    anyhow::bail!("`{main_crate}` not found in any dependency section")
 }
 
 /// Extract feature name from a recommendation string like 'reqwest with "json" feature'.
@@ -318,7 +305,7 @@ fn add_feature_to_dep(
 ) -> Result<()> {
     let entry = deps
         .get_mut(crate_name)
-        .ok_or_else(|| anyhow::anyhow!("`{}` not found in [dependencies]", crate_name))?;
+        .ok_or_else(|| anyhow::anyhow!("`{crate_name}` not found in [dependencies]"))?;
 
     match entry {
         Item::Value(Value::String(version_str)) => {
@@ -362,7 +349,7 @@ fn add_feature_to_dep(
             }
         }
         _ => {
-            anyhow::bail!("unexpected dependency format for `{}`", crate_name);
+            anyhow::bail!("unexpected dependency format for `{crate_name}`");
         }
     }
 
@@ -385,7 +372,7 @@ fn print_diff(old: &str, new: &str) {
                 println!();
                 shown_header = true;
             }
-            println!("{}", format!("- {}", line).red());
+            println!("{}", format!("- {line}").red());
         }
     }
 
@@ -397,7 +384,7 @@ fn print_diff(old: &str, new: &str) {
                 println!();
                 shown_header = true;
             }
-            println!("{}", format!("+ {}", line).green());
+            println!("{}", format!("+ {line}").green());
         }
     }
 

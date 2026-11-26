@@ -13,6 +13,9 @@ cargo anoint --workspace --offline
 cargo anoint --workspace --offline --json --fail-on-overlap
 ```
 
+The tool uses the repository's dated nightly compiler, asynchronous wreq-exp,
+ and btls-fast. It requires a native C/C++ toolchain for BoringSSL.
+
 For CI, install from a reviewed commit with `--rev`. Pass
 `--target <target-triple>` and the same `--features` /
 `--no-default-features` as the corresponding build. Default feature selection

@@ -27,19 +27,20 @@ pub struct Suggestion {
 impl Suggestion {
     /// Whether this suggestion can be auto-applied by editing Cargo.toml only.
     /// Only suggestions explicitly marked as Cargo.toml-only are eligible.
-    pub fn is_auto_fixable(&self) -> bool {
+    #[must_use = "Use the result to decide whether editing the manifest is sufficient"]
+    pub const fn is_auto_fixable(&self) -> bool {
         matches!(self.autofix_safety, AutofixSafety::CargoTomlOnly)
     }
 }
 
 /// The type of suggestion.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SuggestionKind {
     /// Replace with a modern alternative crate.
     ModernAlternative,
     /// Enable a built-in feature to drop a separate dependency.
     FeatureOptimization,
-    /// Replace with a std equivalent (e.g., LazyLock).
+    /// Replace with a std equivalent (e.g., `LazyLock`).
     StdReplacement,
     /// Consolidate multiple crates doing the same thing.
     ComboWin,
@@ -58,7 +59,7 @@ pub enum Impact {
 }
 
 /// Confidence level for a recommendation.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Confidence {
     High,
     Medium,
@@ -66,7 +67,7 @@ pub enum Confidence {
 }
 
 /// Estimated migration risk for applying a recommendation.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum MigrationRisk {
     High,
     Medium,
@@ -74,7 +75,7 @@ pub enum MigrationRisk {
 }
 
 /// Whether cargo-anoint may safely apply the suggestion itself.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum AutofixSafety {
     /// Safe to apply by changing Cargo.toml only.
     CargoTomlOnly,
@@ -83,7 +84,7 @@ pub enum AutofixSafety {
 }
 
 /// Primary evidence behind a recommendation.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum EvidenceSource {
     BlessedRs,
     RustSec,
@@ -117,7 +118,7 @@ pub struct Rule {
 }
 
 /// Derive impact from suggestion kind.
-fn impact_for(kind: &SuggestionKind) -> Impact {
+const fn impact_for(kind: &SuggestionKind) -> Impact {
     match kind {
         SuggestionKind::Unmaintained | SuggestionKind::StdReplacement => Impact::High,
         SuggestionKind::ModernAlternative
@@ -127,26 +128,28 @@ fn impact_for(kind: &SuggestionKind) -> Impact {
     }
 }
 
-fn default_confidence() -> Confidence {
+const fn default_confidence() -> Confidence {
     Confidence::Medium
 }
 
-fn default_migration_risk() -> MigrationRisk {
+const fn default_migration_risk() -> MigrationRisk {
     MigrationRisk::Medium
 }
 
-fn default_autofix_safety() -> AutofixSafety {
+const fn default_autofix_safety() -> AutofixSafety {
     AutofixSafety::ManualOnly
 }
 
-fn default_evidence_source() -> EvidenceSource {
+const fn default_evidence_source() -> EvidenceSource {
     EvidenceSource::Heuristic
 }
 
 /// Load the reviewed, version-controlled rule database. Live cache entries must not change CI results.
-pub fn load_rules() -> Vec<Rule> {
+///
+/// # Errors
+/// Returns an error if the embedded suggestion database is invalid JSON.
+pub fn load_rules() -> serde_json::Result<Vec<Rule>> {
     serde_json::from_str(include_str!("../data/suggestions.json"))
-        .expect("embedded suggestions.json should be valid")
 }
 
 use std::fs;
@@ -158,21 +161,27 @@ use std::fs;
 ///   as direct deps.
 use std::path::Path;
 
+///
+/// # Errors
+/// Returns an error if the embedded organization policy cannot be decoded.
 pub fn analyze(
     manifest_path: Option<&Path>,
     deps: &[ResolvedDep],
     rules: &[Rule],
-) -> Vec<Suggestion> {
+) -> serde_json::Result<Vec<Suggestion>> {
     analyze_for_package(manifest_path, deps, rules, None)
 }
 
 /// Like [`analyze`], but tags each suggestion with `package` for workspace output.
+///
+/// # Errors
+/// Returns an error if the embedded organization policy cannot be decoded.
 pub fn analyze_for_package(
     manifest_path: Option<&Path>,
     deps: &[ResolvedDep],
     rules: &[Rule],
     package_label: Option<&str>,
-) -> Vec<Suggestion> {
+) -> serde_json::Result<Vec<Suggestion>> {
     let direct_names: HashSet<&str> = deps
         .iter()
         .filter(|d| d.is_direct)
@@ -229,8 +238,8 @@ pub fn analyze_for_package(
         }
     }
 
-    suggestions.extend(crate::organization::analyze(deps, package_label));
-    suggestions
+    suggestions.extend(crate::organization::analyze(deps, package_label)?);
+    Ok(suggestions)
 }
 
 /// Recursively scans `.rs` files in the project to determine if the crate is imported or used.
@@ -268,9 +277,8 @@ fn is_crate_used_in_source(manifest_path: Option<&Path>, crate_name: &str) -> bo
 }
 
 fn scan_dir_for_patterns(dir: &Path, patterns: &[String]) -> bool {
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return false,
+    let Ok(entries) = fs::read_dir(dir) else {
+        return false;
     };
 
     for entry in entries.flatten() {
@@ -279,12 +287,12 @@ fn scan_dir_for_patterns(dir: &Path, patterns: &[String]) -> bool {
             if scan_dir_for_patterns(&path, patterns) {
                 return true;
             }
-        } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
-            if let Ok(contents) = fs::read_to_string(&path) {
-                for pattern in patterns {
-                    if contents.contains(pattern) {
-                        return true;
-                    }
+        } else if path.extension().and_then(|e| e.to_str()) == Some("rs")
+            && let Ok(contents) = fs::read_to_string(&path)
+        {
+            for pattern in patterns {
+                if contents.contains(pattern) {
+                    return true;
                 }
             }
         }
@@ -299,7 +307,7 @@ mod tests {
 
     #[test]
     fn test_load_rules() {
-        let rules = load_rules();
+        let rules = load_rules().unwrap();
         assert!(
             rules.len() >= 15,
             "should load at least 15 rules, got {}",
@@ -314,7 +322,7 @@ mod tests {
 
     #[test]
     fn test_analyze_single_crate_match() {
-        let rules = load_rules();
+        let rules = load_rules().unwrap();
         let deps = vec![
             ResolvedDep {
                 name: "lazy_static".into(),
@@ -338,7 +346,7 @@ mod tests {
             },
         ];
 
-        let suggestions = analyze(None, &deps, &rules);
+        let suggestions = analyze(None, &deps, &rules).unwrap();
         assert_eq!(suggestions.len(), 1);
         assert_eq!(suggestions[0].current, "lazy_static");
         assert_eq!(suggestions[0].recommended, "std::sync::LazyLock");
@@ -387,6 +395,7 @@ mod tests {
         };
 
         let suggestions: Vec<_> = analyze(None, &deps, &[custom_rule])
+            .unwrap()
             .into_iter()
             .filter(|s| s.current == "reqwest+some_unused_crate")
             .collect();
@@ -401,7 +410,7 @@ mod tests {
 
     #[test]
     fn test_analyze_combo_partial_no_match() {
-        let rules = load_rules();
+        let rules = load_rules().unwrap();
         // Only reqwest present, no serde_json — combo should NOT fire
         let deps = vec![ResolvedDep {
             name: "reqwest".into(),
@@ -414,7 +423,7 @@ mod tests {
             direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
         }];
 
-        let suggestions = analyze(None, &deps, &rules);
+        let suggestions = analyze(None, &deps, &rules).unwrap();
         assert!(
             !suggestions
                 .iter()
@@ -425,7 +434,7 @@ mod tests {
 
     #[test]
     fn test_analyze_ignores_transitive() {
-        let rules = load_rules();
+        let rules = load_rules().unwrap();
         let deps = vec![ResolvedDep {
             name: "lazy_static".into(),
             version: "1.5.0".into(),
@@ -437,7 +446,7 @@ mod tests {
             direct_kinds: vec![], // transitive — should be ignored
         }];
 
-        let suggestions = analyze(None, &deps, &rules);
+        let suggestions = analyze(None, &deps, &rules).unwrap();
         assert!(
             suggestions.is_empty(),
             "transitive deps should not trigger suggestions"
@@ -446,7 +455,7 @@ mod tests {
 
     #[test]
     fn test_analyze_multiple_matches() {
-        let rules = load_rules();
+        let rules = load_rules().unwrap();
         let deps = vec![
             ResolvedDep {
                 name: "lazy_static".into(),
@@ -480,7 +489,7 @@ mod tests {
             },
         ];
 
-        let suggestions = analyze(None, &deps, &rules);
+        let suggestions = analyze(None, &deps, &rules).unwrap();
         assert_eq!(suggestions.len(), 3);
 
         let names: Vec<&str> = suggestions.iter().map(|s| s.current.as_str()).collect();
@@ -491,7 +500,7 @@ mod tests {
 
     #[test]
     fn test_analyze_clean_project() {
-        let rules = load_rules();
+        let rules = load_rules().unwrap();
         // Modern deps that shouldn't trigger any rules
         let deps = vec![
             ResolvedDep {
@@ -516,7 +525,7 @@ mod tests {
             },
         ];
 
-        let suggestions = analyze(None, &deps, &rules);
+        let suggestions = analyze(None, &deps, &rules).unwrap();
         assert!(
             suggestions.is_empty(),
             "modern deps should not trigger any suggestions"
@@ -549,7 +558,8 @@ mod tests {
             is_direct: false,
             direct_kinds: vec![],
         };
-        let findings = analyze(None, &[dep], &load_rules());
+        let findings = analyze(None, &[dep], &load_rules().expect("embedded rules"))
+            .expect("organization policy");
         assert!(findings.iter().any(|f| f.current == "fxhash"
             && f.kind == SuggestionKind::Unmaintained
             && f.evidence_source == EvidenceSource::RustSec));

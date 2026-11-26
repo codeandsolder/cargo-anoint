@@ -125,16 +125,24 @@ fn finding(
     }
 }
 
-pub(crate) fn analyze(deps: &[ResolvedDep], package: Option<&str>) -> Vec<Suggestion> {
-    static POLICY: std::sync::OnceLock<Policy> = std::sync::OnceLock::new();
-    let policy = POLICY.get_or_init(|| {
-        serde_json::from_str(include_str!("../data/organization.json"))
-            .expect("embedded organization policy must be valid")
-    });
+pub fn analyze(deps: &[ResolvedDep], package: Option<&str>) -> serde_json::Result<Vec<Suggestion>> {
+    let policy: Policy = serde_json::from_str(include_str!("../data/organization.json"))?;
     let direct: Vec<_> = deps.iter().filter(|dep| dep.is_direct).collect();
     let mut results = Vec::new();
+    append_fork_findings(&policy.forks, deps, package, &mut results);
+    append_preference_findings(&policy, deps, package, &mut results);
+    append_version_findings(&policy.version_families, deps, package, &mut results);
+    append_overlap_findings(&policy.capabilities, &direct, package, &mut results);
+    Ok(results)
+}
 
-    for fork in &policy.forks {
+fn append_fork_findings(
+    forks: &[Fork],
+    deps: &[ResolvedDep],
+    package: Option<&str>,
+    results: &mut Vec<Suggestion>,
+) {
+    for fork in forks {
         for name in &fork.packages {
             let sources: BTreeSet<_> = deps
                 .iter()
@@ -156,7 +164,14 @@ pub(crate) fn analyze(deps: &[ResolvedDep], package: Option<&str>) -> Vec<Sugges
             }
         }
     }
+}
 
+fn append_preference_findings(
+    policy: &Policy,
+    deps: &[ResolvedDep],
+    package: Option<&str>,
+    results: &mut Vec<Suggestion>,
+) {
     for preference in &policy.preferences {
         for name in &preference.packages {
             if deps.iter().any(|dep| {
@@ -205,7 +220,14 @@ pub(crate) fn analyze(deps: &[ResolvedDep], package: Option<&str>) -> Vec<Sugges
             }
         }
     }
+}
 
+fn append_version_findings(
+    families: &[VersionFamily],
+    deps: &[ResolvedDep],
+    package: Option<&str>,
+    results: &mut Vec<Suggestion>,
+) {
     // Cargo metadata may include optional or target-specific packages. These
     // findings describe the selected resolution, not guaranteed compiled units.
     let mut versions = BTreeMap::<&str, BTreeSet<&str>>::new();
@@ -217,7 +239,10 @@ pub(crate) fn analyze(deps: &[ResolvedDep], package: Option<&str>) -> Vec<Sugges
             let mut suggestion = finding(
                 (*name).to_owned(),
                 "one compatible resolved version where upstream constraints permit".into(),
-                format!("Multiple versions in the reachable Cargo resolution: {}. Inspect inverse dependency trees, enabled features and target/build/dev roles before consolidating; do not force incompatible APIs.", resolved.iter().copied().collect::<Vec<_>>().join(", ")),
+                format!(
+                    "Multiple versions in the reachable Cargo resolution: {}. Inspect inverse dependency trees, enabled features and target/build/dev roles before consolidating; do not force incompatible APIs.",
+                    resolved.iter().copied().collect::<Vec<_>>().join(", ")
+                ),
                 SuggestionKind::ModernAlternative,
                 package,
             );
@@ -225,7 +250,7 @@ pub(crate) fn analyze(deps: &[ResolvedDep], package: Option<&str>) -> Vec<Sugges
             results.push(suggestion);
         }
     }
-    for family in &policy.version_families {
+    for family in families {
         let mut generations = BTreeMap::<u64, BTreeSet<String>>::new();
         let mut members = BTreeSet::new();
         for member in &family.members {
@@ -261,8 +286,15 @@ pub(crate) fn analyze(deps: &[ResolvedDep], package: Option<&str>) -> Vec<Sugges
             results.push(suggestion);
         }
     }
+}
 
-    for capability in &policy.capabilities {
+fn append_overlap_findings(
+    capabilities: &[Capability],
+    direct: &[&ResolvedDep],
+    package: Option<&str>,
+    results: &mut Vec<Suggestion>,
+) {
+    for capability in capabilities {
         let mut reported = BTreeSet::new();
         for kind in [
             cargo_metadata::DependencyKind::Normal,
@@ -304,12 +336,15 @@ pub(crate) fn analyze(deps: &[ResolvedDep], package: Option<&str>) -> Vec<Sugges
             }
         }
     }
-    results
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn analyze(deps: &[ResolvedDep], package: Option<&str>) -> Vec<Suggestion> {
+        super::analyze(deps, package).expect("embedded policy must decode")
+    }
 
     fn dep(name: &str, source: Option<&str>, direct: bool) -> ResolvedDep {
         ResolvedDep {
@@ -375,15 +410,17 @@ mod tests {
         assert_eq!(combos[0].current, "wreq+reqwest");
         assert_eq!(combos[0].package.as_deref(), Some("app"));
         assert!(!combos[0].is_auto_fixable());
-        assert!(analyze(
-            &[
-                dep("btls", None, true),
-                dep("btls-sys", None, true),
-                dep("tokio-btls", None, true)
-            ],
-            None
-        )
-        .is_empty());
+        assert!(
+            analyze(
+                &[
+                    dep("btls", None, true),
+                    dep("btls-sys", None, true),
+                    dep("tokio-btls", None, true)
+                ],
+                None
+            )
+            .is_empty()
+        );
     }
     #[test]
     fn normalized_stack_detects_transitive_backends_and_adapters() {
@@ -432,9 +469,11 @@ mod tests {
         jwt.enabled_features = vec!["aws_lc_rs".into()];
         let findings = analyze(&[flate.clone(), jwt.clone()], None);
         for name in ["flate2", "jsonwebtoken"] {
-            assert!(findings
-                .iter()
-                .any(|f| f.current == name && f.kind == SuggestionKind::FeatureOptimization));
+            assert!(
+                findings
+                    .iter()
+                    .any(|f| f.current == name && f.kind == SuggestionKind::FeatureOptimization)
+            );
         }
         flate.enabled_features = vec!["zlib-rs".into()];
         jwt.enabled_features.clear();
@@ -454,9 +493,11 @@ mod tests {
             None,
         );
         for name in ["linked-hash-map", "chrono", "leptos_axum"] {
-            assert!(findings
-                .iter()
-                .any(|finding| finding.current == name && !finding.is_auto_fixable()));
+            assert!(
+                findings
+                    .iter()
+                    .any(|finding| finding.current == name && !finding.is_auto_fixable())
+            );
         }
     }
 
@@ -468,9 +509,11 @@ mod tests {
         object.enabled_features = vec!["compression".into()];
         let findings = analyze(&[jwt, object], None);
         assert_eq!(findings.len(), 2);
-        assert!(findings
-            .iter()
-            .all(|f| f.kind == SuggestionKind::FeatureOptimization && !f.is_auto_fixable()));
+        assert!(
+            findings
+                .iter()
+                .all(|f| f.kind == SuggestionKind::FeatureOptimization && !f.is_auto_fixable())
+        );
     }
 
     #[test]
@@ -483,45 +526,61 @@ mod tests {
             "simple_asn1",
             "webpki-roots",
         ] {
-            assert!(analyze(&[dep(name, None, true)], None)
-                .iter()
-                .any(|f| f.current == name));
+            assert!(
+                analyze(&[dep(name, None, true)], None)
+                    .iter()
+                    .any(|f| f.current == name)
+            );
         }
-        assert!(analyze(
-            &[dep(
-                "jsonwebtoken-btls",
-                Some("git+https://github.com/codeandsolder/btls-fast.git?rev=abc#abc"),
-                true
-            )],
-            None
-        )
-        .is_empty());
+        assert!(
+            analyze(
+                &[dep(
+                    "jsonwebtoken-btls",
+                    Some("git+https://github.com/codeandsolder/btls-fast.git?rev=abc#abc"),
+                    true
+                )],
+                None
+            )
+            .is_empty()
+        );
         assert!(analyze(&[dep("http2", Some("git+https://github.com/codeandsolder/cargo-patches.git?tag=wreq-transport-v0.0.1#abc"), true)], None).is_empty());
     }
 
     #[test]
     fn mount_wrappers_are_not_equivalent_to_every_syscall_binding() {
         let findings = analyze(&[dep("nix", None, true), dep("rustix", None, true)], None);
-        assert!(!findings
-            .iter()
-            .any(|f| f.kind == SuggestionKind::CapabilityOverlap));
+        assert!(
+            !findings
+                .iter()
+                .any(|f| f.kind == SuggestionKind::CapabilityOverlap)
+        );
         let findings = analyze(&[dep("nix", None, true), dep("libmount", None, true)], None);
-        assert!(findings
-            .iter()
-            .any(|f| f.kind == SuggestionKind::CapabilityOverlap));
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.kind == SuggestionKind::CapabilityOverlap)
+        );
     }
     #[test]
     fn shared_patch_satisfies_source_specific_preference() {
-        let patched = dep("compression-codecs", Some("git+https://github.com/codeandsolder/cargo-patches.git?branch=generated/compression-backend#abc"), false);
+        let patched = dep(
+            "compression-codecs",
+            Some(
+                "git+https://github.com/codeandsolder/cargo-patches.git?branch=generated/compression-backend#abc",
+            ),
+            false,
+        );
         let registry = dep(
             "compression-codecs",
             Some("registry+https://github.com/rust-lang/crates.io-index"),
             false,
         );
-        assert!(analyze(&[patched.clone()], None).is_empty());
-        assert!(analyze(&[patched, registry], None)
-            .iter()
-            .any(|finding| finding.current == "compression-codecs"));
+        assert!(analyze(std::slice::from_ref(&patched), None).is_empty());
+        assert!(
+            analyze(&[patched, registry], None)
+                .iter()
+                .any(|finding| finding.current == "compression-codecs")
+        );
     }
 
     #[test]
@@ -540,8 +599,10 @@ mod tests {
         assert!(findings.iter().all(|f| f.impact == Impact::Low
             && f.kind != SuggestionKind::CapabilityOverlap
             && !f.is_auto_fixable()));
-        assert!(findings
-            .iter()
-            .any(|f| f.current == "wasmparser" && f.reason.contains("0.248.0")));
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.current == "wasmparser" && f.reason.contains("0.248.0"))
+        );
     }
 }

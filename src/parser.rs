@@ -1,7 +1,7 @@
 //! Parser layer — extracts the full dependency tree from Cargo.toml / Cargo.lock
 //! using `cargo_metadata` for feature-aware resolution.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use cargo_metadata::{
     CargoOpt, DependencyKind, MetadataCommand, Node, Package, PackageId, Resolve,
 };
@@ -42,7 +42,7 @@ impl fmt::Display for ResolvedDep {
         } else {
             "transitive"
         };
-        write!(f, "{} v{} ({})", self.name, self.version, tag)?;
+        write!(f, "{} v{} ({tag})", self.name, self.version)?;
         if !self.enabled_features.is_empty() {
             write!(f, " [enabled: {}]", self.enabled_features.join(", "))?;
         }
@@ -54,6 +54,9 @@ impl fmt::Display for ResolvedDep {
 }
 
 /// Get the root project's name and version from Cargo metadata.
+///
+/// # Errors
+/// Returns an error if Cargo metadata fails or no root package can be resolved.
 pub fn get_project_info(manifest_path: Option<&Path>) -> Result<(String, String)> {
     let cmd = metadata_command(manifest_path);
     let metadata = cmd.exec()?;
@@ -67,7 +70,7 @@ pub fn get_project_info(manifest_path: Option<&Path>) -> Result<(String, String)
         .iter()
         .find(|p| &p.id == root_id)
         .ok_or_else(|| anyhow::anyhow!("Root package not in packages list"))?;
-    Ok((root_pkg.name.to_string(), root_pkg.version.to_string()))
+    Ok((root_pkg.name.clone(), root_pkg.version.to_string()))
 }
 
 /// Build a lookup from package ID to the resolved Node (which carries enabled features).
@@ -92,6 +95,9 @@ fn build_pkg_lookup(metadata: &cargo_metadata::Metadata) -> HashMap<String, Pack
 ///
 /// **Key change**: uses `resolve.nodes[].features` for the **actual enabled features**
 /// rather than `pkg.features.keys()` which only lists declared/available features.
+///
+/// # Errors
+/// Returns an error if metadata resolution fails or no root snapshot exists.
 pub fn get_deps(manifest_path: Option<&Path>) -> Result<Vec<ResolvedDep>> {
     let snapshots = fetch_metadata_and_snapshots(
         manifest_path,
@@ -122,6 +128,9 @@ pub struct ResolutionOptions {
     pub target: Option<String>,
 }
 
+///
+/// # Errors
+/// Returns an error if metadata resolution fails or the package selection is invalid.
 pub fn get_package_snapshots(
     manifest_path: Option<&Path>,
     workspace_all_members: bool,
@@ -234,8 +243,7 @@ fn fetch_metadata_and_snapshots(
 
                 if !missing.is_empty() {
                     bail!(
-                        "no workspace package(s) matching {:?} — available: {}",
-                        missing,
+                        "no workspace package(s) matching {missing:?} — available: {}",
                         workspace_packages_ordered
                             .iter()
                             .map(|p| p.name.as_str())
@@ -255,7 +263,7 @@ fn fetch_metadata_and_snapshots(
     for pkg in targets {
         let deps = resolve_deps_for_root(&pkg.id, resolve, &pkg_map, &node_map, all_targets)?;
         out.push(PackageResult {
-            name: pkg.name.to_string(),
+            name: pkg.name.clone(),
             version: pkg.version.to_string(),
             manifest_path: PathBuf::from(pkg.manifest_path.as_str()),
             deps,
@@ -314,9 +322,8 @@ fn resolve_deps_for_root(
             continue;
         }
 
-        let pkg = match pkg_map.get(&node.id.to_string()) {
-            Some(p) => p,
-            None => continue,
+        let Some(pkg) = pkg_map.get(&node.id.to_string()) else {
+            continue;
         };
 
         let is_direct = direct_dep_ids.contains(&node.id.to_string());
@@ -327,14 +334,14 @@ fn resolve_deps_for_root(
             .map(|s| s.as_str().to_string())
             .collect();
 
-        let available_features: Vec<String> = pkg.features.keys().map(|s| s.to_string()).collect();
+        let available_features: Vec<String> = pkg.features.keys().cloned().collect();
 
         deps.push(ResolvedDep {
-            name: pkg.name.to_string(),
+            name: pkg.name.clone(),
             version: pkg.version.to_string(),
             enabled_features,
             available_features,
-            source: pkg.source.as_ref().map(|s| s.to_string()),
+            source: pkg.source.as_ref().map(std::string::ToString::to_string),
             repository: pkg.repository.clone(),
             is_direct,
             direct_kinds: root_node

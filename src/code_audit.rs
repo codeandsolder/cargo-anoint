@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tree_sitter::{Node, Parser};
@@ -33,7 +33,7 @@ pub enum BullshitKind {
 }
 
 impl BullshitKind {
-    fn label(self) -> &'static str {
+    const fn label(self) -> &'static str {
         match self {
             Self::FakeComplexity => "fake complexity",
             Self::CargoCult => "cargo cult",
@@ -97,12 +97,14 @@ pub struct CodeAuditReport {
 }
 
 impl CodeAuditReport {
-    pub fn is_clean(&self) -> bool {
+    #[must_use = "Use the result to determine whether any findings remain"]
+    pub const fn is_clean(&self) -> bool {
         self.alerts.is_empty()
     }
 }
 
 /// Concatenate workspace member audits into one report (sums `files_scanned`, merges alerts).
+#[must_use = "Returns the combined report"]
 pub fn merge_reports(reports: Vec<CodeAuditReport>) -> CodeAuditReport {
     let mut files_scanned = 0usize;
     let mut alerts = Vec::new();
@@ -116,6 +118,9 @@ pub fn merge_reports(reports: Vec<CodeAuditReport>) -> CodeAuditReport {
     }
 }
 
+///
+/// # Errors
+/// Returns an error if source files cannot be read or the scan patterns cannot be initialized.
 pub fn scan_project(
     manifest_path: Option<&Path>,
     config: &CodeAuditConfig,
@@ -123,6 +128,9 @@ pub fn scan_project(
     scan_project_with_filter(manifest_path, config, None)
 }
 
+///
+/// # Errors
+/// Returns an error if Git diff collection or source scanning fails.
 pub fn scan_git_diff(
     manifest_path: Option<&Path>,
     config: &CodeAuditConfig,
@@ -184,6 +192,9 @@ fn scan_project_with_filter(
     })
 }
 
+///
+/// # Errors
+/// Returns an error if the regular expressions used for scanning cannot be initialized.
 pub fn scan_code(
     code: &str,
     file: impl Into<PathBuf>,
@@ -208,13 +219,16 @@ pub fn scan_code(
     Ok(alerts)
 }
 
+#[must_use = "Returns the effective audit configuration"]
 pub fn config_from_policy(policy: Option<&crate::policy::Policy>) -> CodeAuditConfig {
     let mut config = CodeAuditConfig::default();
     if let Some(policy) = policy {
-        config.ignore_paths = policy.code_audit.ignore_paths.clone();
+        config
+            .ignore_paths
+            .clone_from(&policy.code_audit.ignore_paths);
         config.ignore_kinds = policy.code_audit.ignore_kinds.iter().cloned().collect();
         if policy.settings.min_confidence > 0.0 {
-            config.confidence_threshold = policy.settings.min_confidence as f32;
+            config.confidence_threshold = policy.settings.min_confidence;
         }
         if policy.code_audit.include_tests {
             config.include_tests = true;
@@ -317,8 +331,7 @@ impl DiffFilter {
         let path = alert
             .file
             .strip_prefix(&self.base_dir)
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|_| alert.file.clone());
+            .map_or_else(|_| alert.file.clone(), Path::to_path_buf);
         let path = normalize_diff_path(&path);
         self.changed_lines.get(&path).is_some_and(|ranges| {
             ranges
@@ -356,8 +369,9 @@ fn parse_hunk_new_range(line: &str) -> Option<(usize, usize)> {
     let plus = plus.trim_start_matches('+');
     let (start, count) = plus
         .split_once(',')
-        .map(|(start, count)| (start, count.parse::<usize>().ok()))
-        .unwrap_or((plus, Some(1)));
+        .map_or((plus, Some(1)), |(start, count)| {
+            (start, count.parse::<usize>().ok())
+        });
     let start = start.parse::<usize>().ok()?;
     let count = count?;
     if count == 0 {
@@ -421,11 +435,8 @@ fn collect_ignored_ranges(node: Node<'_>, code: &[u8], ranges: &mut Vec<(usize, 
                 let mut j = i + 1;
                 while j < children.len() {
                     let next = children[j];
-                    if next.kind() == "attribute_item" {
-                        ranges.push((next.start_byte(), next.end_byte()));
-                    } else {
-                        // This is the actual item (function, mod, etc.) — mask it
-                        ranges.push((next.start_byte(), next.end_byte()));
+                    ranges.push((next.start_byte(), next.end_byte()));
+                    if next.kind() != "attribute_item" {
                         i = j;
                         break;
                     }
@@ -446,22 +457,20 @@ fn collect_ignored_ranges(node: Node<'_>, code: &[u8], ranges: &mut Vec<(usize, 
 }
 
 fn is_test_attr(node: Node<'_>, code: &[u8]) -> bool {
-    if let Ok(text) = std::str::from_utf8(&code[node.start_byte()..node.end_byte()]) {
+    std::str::from_utf8(&code[node.start_byte()..node.end_byte()]).is_ok_and(|text| {
         let t: String = text.chars().filter(|c| !c.is_whitespace()).collect();
         t == "#[test]" || t.contains("#[cfg(test)]") || t.contains("#[cfg(any(test")
-    } else {
-        false
-    }
+    })
 }
 
 fn mask_ranges(code: &str, ranges: &[(usize, usize)]) -> String {
     let mut bytes = code.as_bytes().to_vec();
     for (start, end) in ranges {
         for idx in *start..*end {
-            if let Some(byte) = bytes.get_mut(idx) {
-                if *byte != b'\n' {
-                    *byte = b' ';
-                }
+            if let Some(byte) = bytes.get_mut(idx)
+                && *byte != b'\n'
+            {
+                *byte = b' ';
             }
         }
     }
@@ -568,7 +577,9 @@ fn scan_line_patterns(code: &str, file: &Path, alerts: &mut Vec<BullshitAlert>) 
         if clone_count >= 2 {
             alerts.push(alert_from_line(
                 BullshitKind::CloneAbuse,
-                (0.60 + clone_count as f32 * 0.08).min(0.92),
+                f32::from(u8::try_from(clone_count).unwrap_or(u8::MAX))
+                    .mul_add(0.08, 0.60)
+                    .min(0.92),
                 file,
                 line_idx + 1,
                 line.find(".clone()").unwrap_or(0) + 1,
@@ -650,29 +661,39 @@ fn scan_line_patterns(code: &str, file: &Path, alerts: &mut Vec<BullshitAlert>) 
             ));
         }
 
-        // .ok() used as a statement silently discards an error
-        if line.trim_end().ends_with(".ok();") || line.contains(").ok();") {
-            let col = line.find(".ok()").unwrap_or(0) + 1;
-            alerts.push(alert_from_line(
-                BullshitKind::DiscardedError,
-                0.76,
-                file,
-                line_idx + 1,
-                col,
-                line,
-                "Calling `.ok()` as a statement silently discards the error variant.",
-                "Propagate with `?`, handle the `Err`, or at minimum log before discarding.",
-            ));
-        }
+        scan_discarded_errors_and_lossy_utf8(line_idx, line, file, alerts);
+    }
+}
 
-        // let _ = discards the return value (often a Result)
-        let trimmed_start = line.trim_start();
-        if trimmed_start.starts_with("let _ =")
-            && !trimmed_start.starts_with("let _ = ()")
-            && trimmed_start.contains('(')
-        {
-            let col = line.find("let _ =").unwrap_or(0) + 1;
-            alerts.push(alert_from_line(
+fn scan_discarded_errors_and_lossy_utf8(
+    line_idx: usize,
+    line: &str,
+    file: &Path,
+    alerts: &mut Vec<BullshitAlert>,
+) {
+    // .ok() used as a statement silently discards an error
+    if line.trim_end().ends_with(".ok();") || line.contains(").ok();") {
+        let col = line.find(".ok()").unwrap_or(0) + 1;
+        alerts.push(alert_from_line(
+            BullshitKind::DiscardedError,
+            0.76,
+            file,
+            line_idx + 1,
+            col,
+            line,
+            "Calling `.ok()` as a statement silently discards the error variant.",
+            "Propagate with `?`, handle the `Err`, or at minimum log before discarding.",
+        ));
+    }
+
+    // let _ = discards the return value (often a Result)
+    let trimmed_start = line.trim_start();
+    if trimmed_start.starts_with("let _ =")
+        && !trimmed_start.starts_with("let _ = ()")
+        && trimmed_start.contains('(')
+    {
+        let col = line.find("let _ =").unwrap_or(0) + 1;
+        alerts.push(alert_from_line(
                 BullshitKind::DiscardedError,
                 0.65,
                 file,
@@ -682,11 +703,11 @@ fn scan_line_patterns(code: &str, file: &Path, alerts: &mut Vec<BullshitAlert>) 
                 "`let _ = expr` silently ignores the return value — likely a discarded Result or error.",
                 "Handle the value explicitly, use `drop()` with a comment explaining why, or propagate.",
             ));
-        }
+    }
 
-        if line.contains("from_utf8_lossy(") {
-            let col = line.find("from_utf8_lossy(").unwrap_or(0) + 1;
-            alerts.push(alert_from_line(
+    if line.contains("from_utf8_lossy(") {
+        let col = line.find("from_utf8_lossy(").unwrap_or(0) + 1;
+        alerts.push(alert_from_line(
                 BullshitKind::LossyUtf8,
                 0.70,
                 file,
@@ -696,7 +717,6 @@ fn scan_line_patterns(code: &str, file: &Path, alerts: &mut Vec<BullshitAlert>) 
                 "`from_utf8_lossy` silently replaces invalid UTF-8 bytes with U+FFFD, corrupting binary data.",
                 "Use `from_utf8` and handle the error, or work with raw bytes via `OsStr` / `io::Write::write_all`.",
             ));
-        }
     }
 }
 
@@ -735,7 +755,8 @@ fn scan_function_complexity(code: &str, file: &Path, alerts: &mut Vec<BullshitAl
         }
 
         if saw_body && complexity >= 6 {
-            let confidence = (complexity as f32 / 24.0).clamp(0.66, 0.95);
+            let confidence =
+                (f32::from(u8::try_from(complexity).unwrap_or(u8::MAX)) / 24.0).clamp(0.66, 0.95);
             alerts.push(alert_from_line(
                 BullshitKind::FakeComplexity,
                 confidence,
@@ -779,7 +800,10 @@ fn line_complexity(line: &str) -> usize {
     score
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Diagnostic construction carries source location and explanatory text"
+)]
 fn make_alert(
     kind: BullshitKind,
     confidence: f32,
@@ -804,7 +828,10 @@ fn make_alert(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Diagnostic construction carries source location and explanatory text"
+)]
 fn alert_from_line(
     kind: BullshitKind,
     confidence: f32,
@@ -866,7 +893,8 @@ fn dedupe_alerts(alerts: &mut Vec<BullshitAlert>) {
     });
 }
 
-pub fn kind_label(kind: BullshitKind) -> &'static str {
+#[must_use = "Returns the display label for the finding"]
+pub const fn kind_label(kind: BullshitKind) -> &'static str {
     kind.label()
 }
 
@@ -895,9 +923,11 @@ fn main() {
     fn detects_shared_mutable_state() {
         let code = "type Store = Arc<RwLock<HashMap<String, String>>>;";
         let alerts = scan_code(code, "src/lib.rs", &config()).unwrap();
-        assert!(alerts
-            .iter()
-            .any(|a| a.kind == BullshitKind::OverEngineering));
+        assert!(
+            alerts
+                .iter()
+                .any(|a| a.kind == BullshitKind::OverEngineering)
+        );
     }
 
     #[test]
@@ -909,9 +939,11 @@ fn tangled(x: usize) -> usize {
 }
 "#;
         let alerts = scan_code(code, "src/lib.rs", &config()).unwrap();
-        assert!(alerts
-            .iter()
-            .any(|a| a.kind == BullshitKind::FakeComplexity));
+        assert!(
+            alerts
+                .iter()
+                .any(|a| a.kind == BullshitKind::FakeComplexity)
+        );
     }
 
     #[test]

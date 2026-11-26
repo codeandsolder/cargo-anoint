@@ -2,13 +2,12 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
 use regex::Regex;
 
 use crate::code_audit::{BullshitAlert, CodeAuditReport};
 use crate::suggestions::{Impact, Suggestion};
-use anyhow::Result;
 
 const HOTSPOT_LIMIT: usize = 5;
 
@@ -19,15 +18,14 @@ pub fn emit_feedback_stdout(
     total_deps: usize,
     suggestions: &[Suggestion],
     code_audit: &CodeAuditReport,
-) -> Result<()> {
+) {
     let high_impact = suggestions
         .iter()
         .filter(|s| matches!(s.impact, Impact::High))
         .count();
     let project_root = manifest
         .and_then(Path::parent)
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
+        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
 
     let hotspots = top_hotspots(code_audit, &project_root, HOTSPOT_LIMIT);
 
@@ -47,17 +45,14 @@ pub fn emit_feedback_stdout(
             println!("  - {shown}");
         }
     }
-
-    Ok(())
 }
 
 fn hotspot_key(alert: &BullshitAlert, project_root: &Path) -> String {
     let rel = display_path_under_root(&alert.file, project_root);
-    if let Some(name) = extract_rust_fn_name(&alert.context_snippet) {
-        format!("{}::{}", rel, name)
-    } else {
-        format!("{}:{}", rel, alert.line)
-    }
+    extract_rust_fn_name(&alert.context_snippet).map_or_else(
+        || format!("{rel}:{}", alert.line),
+        |name| format!("{rel}::{name}"),
+    )
 }
 
 fn display_path_under_root(path: &Path, project_root: &Path) -> String {
@@ -65,13 +60,9 @@ fn display_path_under_root(path: &Path, project_root: &Path) -> String {
         return normalize_path_sep(stripped);
     }
     match (path.canonicalize(), project_root.canonicalize()) {
-        (Ok(pa), Ok(pr)) => {
-            if let Ok(stripped) = pa.strip_prefix(&pr) {
-                normalize_path_sep(stripped)
-            } else {
-                normalize_path_sep(path)
-            }
-        }
+        (Ok(pa), Ok(pr)) => pa
+            .strip_prefix(&pr)
+            .map_or_else(|_| normalize_path_sep(path), normalize_path_sep),
         _ => normalize_path_sep(path),
     }
 }
@@ -82,8 +73,9 @@ fn normalize_path_sep(path: &Path) -> String {
 
 /// Best-effort: pull `fn foo` name from snippet or declaration line (including `async fn`).
 fn extract_rust_fn_name(snippet: &str) -> Option<&str> {
-    static FN_RE: OnceLock<Regex> = OnceLock::new();
-    let re = FN_RE.get_or_init(|| Regex::new(r"\bfn\s+([a-zA-Z_][a-zA-Z0-9_]*)").unwrap());
+    static FN_RE: LazyLock<Result<Regex, regex::Error>> =
+        LazyLock::new(|| Regex::new(r"\bfn\s+([a-zA-Z_][a-zA-Z0-9_]*)"));
+    let re = FN_RE.as_ref().ok()?;
     re.captures(snippet)
         .and_then(|c| c.get(1))
         .map(|m| m.as_str())

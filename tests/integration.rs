@@ -2,14 +2,11 @@
 //!
 //! Uses `assert_cmd` to run the binary and check stdout/exit codes.
 
-#![allow(deprecated)]
-
 use assert_cmd::Command;
 use predicates::prelude::*;
 
 fn cargo_anoint_cmd() -> Command {
-    #[allow(deprecated)]
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("anoint");
     cmd
 }
@@ -34,7 +31,11 @@ fn test_fix_dry_run() {
         .arg("--dry-run")
         .assert()
         .success()
-        .stdout(predicate::str::contains("No auto-fixable suggestions"));
+        .stdout(predicate::str::contains("Dry-run"))
+        .stdout(
+            predicate::str::contains("No auto-fixable suggestions")
+                .or(predicate::str::contains("Nothing to modernize")),
+        );
 }
 
 /// Running with --help should print usage information.
@@ -59,7 +60,7 @@ fn test_planned_flags_remain_hidden_from_help() {
 
 #[test]
 fn test_fail_on_unknown_level_exits_nonzero() {
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("anoint").arg("--fail-on=bogus");
     cmd.assert()
         .failure()
@@ -90,7 +91,7 @@ lazy_static = "1"
     fs::create_dir_all(tmp.path().join("src")).expect("create src");
     fs::write(tmp.path().join("src/main.rs"), "fn main() {}").expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
@@ -127,7 +128,7 @@ lazy_static = "1"
 
     fs::write(&policy_path, "fail_on = [\"high\"]\n").expect("write anoint.toml");
 
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
@@ -230,7 +231,7 @@ edition = "2021"
     fs::write(tmp.path().join("src/main.rs"), "fn main() {}\n").expect("write main.rs");
     fs::write(tmp.path().join("anoint.toml"), "not valid toml =").expect("write anoint.toml");
 
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
@@ -272,7 +273,7 @@ memmap = "0.7"
     fs::create_dir_all(tmp.path().join("src")).expect("create src");
     fs::write(tmp.path().join("src/main.rs"), "fn main() {}").expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
@@ -336,7 +337,7 @@ serde_derive = { path = "crates/serde_derive" }
         .expect("write path crate manifest");
     }
 
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
@@ -395,7 +396,7 @@ edition = "2021"
     )
     .expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
@@ -442,7 +443,7 @@ edition = "2021"
     )
     .expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
@@ -498,7 +499,7 @@ edition = "2021"
     )
     .expect("write lib.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("bs").arg("--manifest-path").arg(&manifest);
 
     let output = cmd.output().expect("run cargo-anoint bs");
@@ -537,7 +538,7 @@ edition = "2021"
     )
     .expect("write lib.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("anoint")
         .arg("bs")
         .arg("--manifest-path")
@@ -576,7 +577,7 @@ lazy_static = "1"
     fs::create_dir_all(tmp.path().join("src")).expect("create src");
     fs::write(tmp.path().join("src/main.rs"), "fn main() {}\n").expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
@@ -635,7 +636,7 @@ edition = "2021"
     }
 
     let root_manifest = tmp.path().join("Cargo.toml");
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&root_manifest)
@@ -676,7 +677,7 @@ lazy_static = "1"
     )
     .expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
@@ -724,7 +725,7 @@ lazy_static = "1"
     )
     .expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
@@ -769,7 +770,7 @@ edition = "2021"
     )
     .expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("bs").arg("--manifest-path").arg(&manifest);
     let output = cmd.output().expect("run cargo-anoint bs");
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -777,7 +778,7 @@ edition = "2021"
     assert!(output.status.success(), "should exit 0: {}", stdout);
     assert!(stdout.contains("Showing top 5"));
 
-    let mut verbose = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut verbose = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     verbose
         .arg("bs")
         .arg("--manifest-path")
@@ -823,7 +824,7 @@ ignore_kinds = ["UnwrapAbuse"]
     )
     .expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("bs")
         .arg("--manifest-path")
         .arg(&manifest)
@@ -860,34 +861,40 @@ edition = "2021"
     fs::create_dir_all(tmp.path().join("src")).expect("create src");
     fs::write(&src, "fn main() {\n    println!(\"clean\");\n}\n").expect("write main.rs");
 
-    assert!(StdCommand::new("git")
-        .arg("init")
-        .current_dir(tmp.path())
-        .status()
-        .expect("git init")
-        .success());
-    assert!(StdCommand::new("git")
-        .args(["add", "."])
-        .current_dir(tmp.path())
-        .status()
-        .expect("git add")
-        .success());
-    assert!(StdCommand::new("git")
-        .args([
-            "-c",
-            "user.name=Test",
-            "-c",
-            "user.email=test@example.com",
-            "-c",
-            "commit.gpgsign=false",
-            "commit",
-            "-m",
-            "initial",
-        ])
-        .current_dir(tmp.path())
-        .status()
-        .expect("git commit")
-        .success());
+    assert!(
+        StdCommand::new("git")
+            .arg("init")
+            .current_dir(tmp.path())
+            .status()
+            .expect("git init")
+            .success()
+    );
+    assert!(
+        StdCommand::new("git")
+            .args(["add", "."])
+            .current_dir(tmp.path())
+            .status()
+            .expect("git add")
+            .success()
+    );
+    assert!(
+        StdCommand::new("git")
+            .args([
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-m",
+                "initial",
+            ])
+            .current_dir(tmp.path())
+            .status()
+            .expect("git commit")
+            .success()
+    );
 
     fs::write(
         &src,
@@ -895,7 +902,7 @@ edition = "2021"
     )
     .expect("modify main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("bs")
         .arg("--manifest-path")
         .arg(&manifest)
@@ -956,7 +963,7 @@ edition = "2021"
     .expect("write bravo Cargo.toml");
     fs::write(bravo.join("src/lib.rs"), "").expect("write bravo lib.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(tmp.path().join("Cargo.toml"))
@@ -1006,7 +1013,7 @@ lazy_static = "1"
     )
     .expect("write anoint.toml");
 
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
@@ -1056,7 +1063,7 @@ edition = "2021"
     )
     .expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("bs")
         .arg("--manifest-path")
         .arg(&manifest)
@@ -1100,7 +1107,7 @@ edition = "2021"
     )
     .expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("bs")
         .arg("--manifest-path")
         .arg(&manifest)
@@ -1163,7 +1170,7 @@ edition = "2021"
     let policy_path = tmp.path().join("anoint.toml");
     fs::write(&policy_path, "[settings]\nmin_confidence = 0.99\n").expect("write anoint.toml");
 
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("bs")
         .arg("--manifest-path")
         .arg(&manifest)
@@ -1210,7 +1217,7 @@ edition = "2021"
     )
     .expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("bs")
         .arg("--manifest-path")
         .arg(&manifest)
@@ -1254,7 +1261,7 @@ edition = "2021"
     .expect("write Cargo.toml");
 
     // First run — should create the file
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
@@ -1294,7 +1301,7 @@ edition = "2021"
     );
 
     // Second run — should fail because file already exists
-    let mut cmd2 = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd2 = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd2.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
@@ -1315,7 +1322,7 @@ edition = "2021"
 
 #[test]
 fn test_explain_flag_shows_rule_details() {
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("anoint").arg("--explain").arg("lazy_static");
 
     let output = cmd
@@ -1338,7 +1345,7 @@ fn test_explain_flag_shows_rule_details() {
 
 #[test]
 fn test_explain_flag_unknown_pattern_exits_nonzero() {
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("anoint")
         .arg("--explain")
         .arg("this_crate_does_not_exist_xyz");
@@ -1377,7 +1384,7 @@ edition = "2021"
     )
     .expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("bs")
         .arg("--manifest-path")
         .arg(&manifest)
@@ -1440,7 +1447,7 @@ edition = "2021"
     let original = "fn main() { let x: Option<u32> = None; let _ = x.unwrap(); }\n";
     fs::write(&src, original).expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("bs")
         .arg("--manifest-path")
         .arg(&manifest)
@@ -1497,7 +1504,7 @@ edition = "2021"
     )
     .expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("bs").arg("--manifest-path").arg(&manifest);
 
     let output = cmd.output().expect("run cargo-anoint bs");
@@ -1538,7 +1545,7 @@ edition = "2021"
     )
     .expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("bs").arg("--manifest-path").arg(&manifest);
 
     let output = cmd.output().expect("run cargo-anoint bs");
@@ -1554,7 +1561,7 @@ edition = "2021"
 
 #[test]
 fn test_explain_openssl_rule() {
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("anoint").arg("--explain").arg("openssl");
 
     let output = cmd.output().expect("run cargo anoint --explain openssl");
@@ -1597,7 +1604,7 @@ simple_logger = "4"
     fs::create_dir_all(tmp.path().join("src")).expect("create src");
     fs::write(tmp.path().join("src/main.rs"), "fn main() {}\n").expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
@@ -1646,7 +1653,7 @@ edition = "2021"
     )
     .expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("bs").arg("--manifest-path").arg(&manifest);
 
     let output = cmd.output().expect("run cargo-anoint bs");
@@ -1687,7 +1694,7 @@ edition = "2021"
     )
     .expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("bs").arg("--manifest-path").arg(&manifest);
 
     let output = cmd.output().expect("run cargo-anoint bs");
@@ -1730,7 +1737,7 @@ serde = "1"
     fs::create_dir_all(tmp.path().join("src")).expect("create src");
     fs::write(tmp.path().join("src/main.rs"), "fn main() {}\n").expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
@@ -1831,9 +1838,11 @@ reqwest = { path = "reqwest", optional = true }
     let findings = report["packages"][0]["dependency_suggestions"]
         .as_array()
         .expect("findings");
-    assert!(findings
-        .iter()
-        .any(|f| f["kind"] == "CapabilityOverlap" && f["current"] == "wreq+reqwest"));
+    assert!(
+        findings
+            .iter()
+            .any(|f| f["kind"] == "CapabilityOverlap" && f["current"] == "wreq+reqwest")
+    );
     fs::write(
         root.join("anoint.toml"),
         r#"
