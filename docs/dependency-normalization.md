@@ -53,3 +53,13 @@ Tokio filesystem, synchronization and Tower HTTP services stay enabled.
 This removes WebSocket-specific tungstenite, tokio-tungstenite, data-encoding
 and the old SHA1 version from the sccache native release; these remain legitimate
 when WebSockets are actually used.
+
+
+## Shared utility alignment patches
+
+The shared cargo-patches queue now contains Nix (Fuser), SHA2 (LZMA and
+wasm_split_macros), Base64 (Leptos, leptos_server, server_fn), and
+Jiff/Asyncband (OpenDAL and Reqsign) alignment families. Prefer these
+while they are needed for version consolidation; retire the rules and
+patches when upstream aligns. They are not interchangeable replacements
+for older API versions. Redis pool alignment leaves TLS unchanged.

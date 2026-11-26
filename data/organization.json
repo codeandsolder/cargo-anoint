@@ -139,7 +139,15 @@
         "wreq-util",
         "reqsign-core",
         "reqsign-azure-storage",
-        "reqsign-google"
+        "reqsign-google",
+        "fuser",
+        "lzma-rust2",
+        "wasm_split_macros",
+        "leptos",
+        "leptos_server",
+        "server_fn",
+        "opendal-core",
+        "opendal-service-redis"
       ]
     }
   ],
