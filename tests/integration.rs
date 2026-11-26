@@ -152,6 +152,35 @@ fn test_feedback_prints_block() {
 }
 
 #[test]
+fn feedback_applies_all_targets_from_policy() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let manifest = dir.path().join("Cargo.toml");
+    let dependency = dir.path().join("local");
+    std::fs::create_dir(&dependency)?;
+    std::fs::write(
+        dependency.join("Cargo.toml"),
+        "[package]\nname = \"local\"\nversion = \"0.1.0\"\n[lib]\npath = \"lib.rs\"\n",
+    )?;
+    std::fs::write(dependency.join("lib.rs"), "")?;
+    std::fs::write(
+        &manifest,
+        "[package]\nname = \"feedback-fixture\"\nversion = \"0.1.0\"\n[lib]\npath = \"lib.rs\"\n[dev-dependencies]\nlocal = { path = \"local\" }\n",
+    )?;
+    std::fs::write(dir.path().join("lib.rs"), "")?;
+    std::fs::write(
+        dir.path().join("anoint.toml"),
+        "[settings]\nall_targets = true\n",
+    )?;
+    Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"))
+        .args(["anoint", "--feedback", "--manifest-path"])
+        .arg(manifest)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("direct_deps: 1"));
+    Ok(())
+}
+
+#[test]
 fn test_explicit_missing_policy_exits_nonzero() {
     cargo_anoint_cmd()
         .arg("--policy")

@@ -82,35 +82,7 @@ fn build_pkg_lookup(metadata: &cargo_metadata::Metadata) -> HashMap<&PackageId, 
     metadata.packages.iter().map(|p| (&p.id, p)).collect()
 }
 
-/// Parse the dependency tree for the project at `manifest_path` (resolved root crate only).
-///
-/// **Key change**: uses `resolve.nodes[].features` for the **actual enabled features**
-/// rather than `pkg.features.keys()` which only lists declared/available features.
-///
-/// # Errors
-/// Returns an error if metadata resolution fails or no root snapshot exists.
-pub fn get_deps(manifest_path: Option<&Path>) -> Result<Vec<ResolvedDep>> {
-    let snapshots = fetch_metadata_and_snapshots(
-        manifest_path,
-        SnapshotMode::RootOnly,
-        false,
-        &ResolutionOptions::default(),
-    )?;
-    snapshots
-        .into_iter()
-        .next()
-        .map(|p| p.deps)
-        .ok_or_else(|| anyhow::anyhow!("No dependency snapshot produced"))
-}
-
-/// Load dependency snapshots for workspace members according to Cargo metadata.
-///
-/// - **Root-only**: `workspace_all_members` false and `package_filters` empty — only `[package]` at the resolved root (`resolve.root`).
-/// - **All members**: `workspace_all_members` true — every entry in `metadata.workspace_members`.
-/// - **Filtered**: non-empty `package_filters` — members whose names match exactly (comma-separated CLI values become one slice).
-///
-/// `all_targets` widens what counts as a "direct" dep to include `[dev-dependencies]` and
-/// `[build-dependencies]` in addition to normal `[dependencies]`.
+/// Feature and platform options for Cargo dependency resolution.
 #[derive(Debug, Default)]
 pub struct ResolutionOptions {
     pub all_features: bool,
@@ -119,39 +91,25 @@ pub struct ResolutionOptions {
     pub target: Option<String>,
 }
 
+/// Which workspace packages to analyze.
+#[derive(Clone, Copy, Debug)]
+pub enum PackageSelection<'a> {
+    /// Only the package at the selected manifest.
+    Root,
+    /// Every member of the workspace.
+    All,
+    /// Exact package names. Empty selections are invalid.
+    Names(&'a [String]),
+}
+
+/// Resolve Cargo dependency snapshots for the selected packages.
 ///
+/// With \`all_targets\`, direct dependencies include development and build dependencies.
 /// # Errors
 /// Returns an error if metadata resolution fails or the package selection is invalid.
 pub fn get_package_snapshots(
     manifest_path: Option<&Path>,
-    workspace_all_members: bool,
-    package_filters: &[String],
-    all_targets: bool,
-    resolution: &ResolutionOptions,
-) -> Result<Vec<PackageResult>> {
-    fetch_metadata_and_snapshots(
-        manifest_path,
-        SnapshotMode::Custom {
-            workspace_all_members,
-            filters: package_filters,
-        },
-        all_targets,
-        resolution,
-    )
-}
-
-#[derive(Clone, Copy, Debug)]
-enum SnapshotMode<'a> {
-    RootOnly,
-    Custom {
-        workspace_all_members: bool,
-        filters: &'a [String],
-    },
-}
-
-fn fetch_metadata_and_snapshots(
-    manifest_path: Option<&Path>,
-    mode: SnapshotMode<'_>,
+    selection: PackageSelection<'_>,
     all_targets: bool,
     resolution: &ResolutionOptions,
 ) -> Result<Vec<PackageResult>> {
@@ -194,7 +152,7 @@ fn fetch_metadata_and_snapshots(
     let node_map = build_node_lookup(resolve);
     let pkg_map = build_pkg_lookup(&metadata);
 
-    let targets = select_packages(&metadata, resolve, &pkg_map, mode)?;
+    let targets = select_packages(&metadata, resolve, &pkg_map, selection)?;
 
     let mut out = Vec::with_capacity(targets.len());
     for pkg in targets {
@@ -214,7 +172,7 @@ fn select_packages<'a>(
     metadata: &'a cargo_metadata::Metadata,
     resolve: &Resolve,
     pkg_map: &HashMap<&PackageId, &'a Package>,
-    mode: SnapshotMode<'_>,
+    selection: PackageSelection<'_>,
 ) -> Result<Vec<&'a Package>> {
     let workspace_packages_ordered: Vec<&Package> = metadata
         .workspace_members
@@ -238,18 +196,15 @@ fn select_packages<'a>(
             .ok_or_else(|| anyhow::anyhow!("Root package not in cargo metadata packages list"))
     };
 
-    match mode {
-        SnapshotMode::RootOnly
-        | SnapshotMode::Custom {
-            workspace_all_members: false,
-            filters: [],
-        } => Ok(vec![resolve_workspace_root_pkg()?]),
-        SnapshotMode::Custom {
-            workspace_all_members: true,
-            filters: [],
-        } => Ok(workspace_packages_ordered),
-        SnapshotMode::Custom { filters, .. } => {
-            filter_workspace_members(&workspace_packages_ordered, filters)
+    match selection {
+        PackageSelection::Root => Ok(vec![resolve_workspace_root_pkg()?]),
+        PackageSelection::All => Ok(workspace_packages_ordered),
+        PackageSelection::Names(names) => {
+            anyhow::ensure!(
+                !names.is_empty(),
+                "workspace package selection must not be empty"
+            );
+            filter_workspace_members(&workspace_packages_ordered, names)
         }
     }
 }

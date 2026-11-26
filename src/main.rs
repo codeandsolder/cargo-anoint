@@ -157,8 +157,13 @@ impl DependencyScan {
             opts.all_targets || policy.is_some_and(|p| p.settings.all_targets);
         let snapshots = cargo_anoint::parser::get_package_snapshots(
             manifest,
-            opts.workspace,
-            &opts.package,
+            if !opts.package.is_empty() {
+                cargo_anoint::parser::PackageSelection::Names(&opts.package)
+            } else if opts.workspace {
+                cargo_anoint::parser::PackageSelection::All
+            } else {
+                cargo_anoint::parser::PackageSelection::Root
+            },
             effective_all_targets,
             &resolution_options(opts),
         )?;
@@ -433,25 +438,18 @@ fn print_dependency_summary(snapshots: &[&cargo_anoint::parser::PackageResult]) 
 fn run_feedback_command(opts: &cli::AnointOpts) -> Result<()> {
     let manifest = opts.manifest_path.as_deref();
     let policy = load_policy(opts.policy.as_deref(), manifest)?;
-    let code_audit_config = cargo_anoint::code_audit::config_from_policy(policy.as_ref());
-
-    let deps = cargo_anoint::parser::get_deps(manifest)?;
-    let direct_count = deps.iter().filter(|d| d.is_direct()).count();
-
-    let rules = cargo_anoint::suggestions::load_rules()?;
-    let suggestions = apply_policy(
-        cargo_anoint::suggestions::analyze(&deps, &rules, None)?,
-        policy.as_ref(),
-    );
-
-    let report = cargo_anoint::code_audit::scan_project(manifest, &code_audit_config)?;
-
+    let scan = DependencyScan::new(opts, policy.as_ref())?;
+    let [package] = scan.packages.as_slice() else {
+        bail!("feedback requires exactly one package");
+    };
+    let deps = &package.snapshot.deps;
+    let report = scan.audit()?;
     cargo_anoint::feedback::emit_feedback_stdout(
         env!("CARGO_PKG_VERSION"),
         manifest,
-        direct_count,
+        deps.iter().filter(|dep| dep.is_direct()).count(),
         deps.len(),
-        &suggestions,
+        &package.suggestions,
         &report,
     );
     Ok(())
