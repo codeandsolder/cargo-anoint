@@ -104,7 +104,7 @@ pub enum PackageSelection<'a> {
 
 /// Resolve Cargo dependency snapshots for the selected packages.
 ///
-/// With \`all_targets\`, direct dependencies include development and build dependencies.
+/// With `all_targets`, direct dependencies include development and build dependencies.
 /// # Errors
 /// Returns an error if metadata resolution fails or the package selection is invalid.
 pub fn get_package_snapshots(
