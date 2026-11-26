@@ -51,7 +51,7 @@ Top-level fields:
 - **`workspace_scan`**: `true` when **`--workspace`** was used or multiple members were analyzed.
 - **`packages`**: array of `{ name, version, manifest_path, dependency_suggestions }` where **`dependency_suggestions`** is the list of **`Suggestion`** structs.
 - **`code_audit`**: `null` unless **`--audit-code`** (bless) populated the merged report, or **`cargo anoint bs --json`** with code-audit output.
-- **`security_advisories`**: array of `{ crate_name, advisories: [{ id, summary, aliases }] }`. Omitted from JSON output when empty.
+- **`security_advisories`**: object with `status` (`skipped`, `complete`, or `unavailable`). Complete reports include `checked` and `findings` with exact crates.io versions; unavailable reports include an error.
 
 `cargo anoint bs --json` uses **`packages: []`** plus **`code_audit`**.
 

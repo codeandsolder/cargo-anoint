@@ -34,14 +34,23 @@ const fn use_tagged_suggestions(opts: &cli::AnointOpts) -> bool {
     opts.workspace || !opts.package.is_empty()
 }
 
-fn unique_direct_dependency_versions(
+fn unique_direct_registry_dependency_versions(
     snapshots: &[cargo_anoint::parser::PackageResult],
 ) -> Vec<(&str, &str)> {
     let mut seen = std::collections::HashSet::new();
     snapshots
         .iter()
         .flat_map(|snapshot| snapshot.deps.iter())
-        .filter(|dependency| dependency.is_direct)
+        .filter(|dependency| {
+            dependency.is_direct
+                && matches!(
+                    dependency.source.as_deref(),
+                    Some(
+                        "registry+https://github.com/rust-lang/crates.io-index"
+                            | "sparse+https://index.crates.io/"
+                    )
+                )
+        })
         .filter_map(|dependency| {
             let key = (dependency.name.as_str(), dependency.version.as_str());
             seen.insert(key).then_some(key)
@@ -262,12 +271,7 @@ impl DependencyScan {
         } else {
             None
         };
-        let advisories_for_json = if !self.offline && !opts.no_advisories {
-            let dependencies = unique_direct_dependency_versions(&self.snapshots);
-            cargo_anoint::advisories::fetch_advisories_batch_for_versions(&dependencies).await
-        } else {
-            Vec::new()
-        };
+        let advisories_for_json = self.advisory_report(opts).await;
         let report = cargo_anoint::output::JsonReportUnified {
             cargo_anoint_version: env!("CARGO_PKG_VERSION"),
             workspace_scan: opts.workspace || self.snapshots.len() > 1,
@@ -276,8 +280,28 @@ impl DependencyScan {
             hardcoded_values: None,
             security_advisories: advisories_for_json,
         };
-        cargo_anoint::output::render_unified_json(&report);
+        cargo_anoint::output::render_unified_json(&report)?;
         Ok(())
+    }
+
+    async fn advisory_report(
+        &self,
+        opts: &cli::AnointOpts,
+    ) -> cargo_anoint::advisories::AdvisoryReport {
+        use cargo_anoint::advisories::{AdvisoryReport, fetch_advisories_batch_for_versions};
+        if self.offline || opts.no_advisories {
+            return AdvisoryReport::Skipped;
+        }
+        let dependencies = unique_direct_registry_dependency_versions(&self.snapshots);
+        match fetch_advisories_batch_for_versions(&dependencies).await {
+            Ok(findings) => AdvisoryReport::Complete {
+                checked: dependencies.len(),
+                findings,
+            },
+            Err(error) => AdvisoryReport::Unavailable {
+                error: format!("{error:#}"),
+            },
+        }
     }
 
     async fn fetch_intel(&self) -> HashMap<String, cargo_anoint::intel::CrateIntel> {
@@ -332,17 +356,7 @@ impl DependencyScan {
 
         cargo_anoint::output::render_packages_modernization(&views, &intel);
 
-        // Security advisory check (osv.dev) — one batch call for all direct deps
-        if !self.offline && !opts.no_advisories {
-            let direct_dependencies = unique_direct_dependency_versions(&self.snapshots);
-            if !direct_dependencies.is_empty() {
-                let hits = cargo_anoint::advisories::fetch_advisories_batch_for_versions(
-                    &direct_dependencies,
-                )
-                .await;
-                cargo_anoint::output::render_advisories(&hits);
-            }
-        }
+        cargo_anoint::output::render_advisories(&self.advisory_report(opts).await);
 
         if opts.audit_code {
             cargo_anoint::output::render_code_audit_report(&self.audit()?, opts.verbose);
@@ -478,7 +492,7 @@ fn run_code_audit_command(opts: &cli::CodeAuditOpts) -> Result<()> {
     };
 
     if opts.sarif {
-        cargo_anoint::output::render_sarif(&report);
+        cargo_anoint::output::render_sarif(&report)?;
     } else if opts.json {
         let unified = cargo_anoint::output::JsonReportUnified {
             cargo_anoint_version: env!("CARGO_PKG_VERSION"),
@@ -486,9 +500,9 @@ fn run_code_audit_command(opts: &cli::CodeAuditOpts) -> Result<()> {
             packages: Vec::new(),
             code_audit: Some(&report),
             hardcoded_values: if opts.hardcoded { Some(&bs_hits) } else { None },
-            security_advisories: Vec::new(),
+            security_advisories: cargo_anoint::advisories::AdvisoryReport::Skipped,
         };
-        cargo_anoint::output::render_unified_json(&unified);
+        cargo_anoint::output::render_unified_json(&unified)?;
     } else {
         println!("🙏 cargo-anoint v{}", env!("CARGO_PKG_VERSION"));
         cargo_anoint::output::render_code_audit_report(&report, opts.verbose);
@@ -522,7 +536,7 @@ fn load_policy(
     explicit_path.map_or_else(
         || {
             let path = default_policy_path(manifest_path);
-            if path.exists() {
+            if path.try_exists()? {
                 cargo_anoint::policy::try_load_policy(&path).map(Some)
             } else {
                 Ok(None)

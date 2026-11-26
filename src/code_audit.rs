@@ -12,7 +12,7 @@ use tree_sitter::{Node, Parser};
 
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub enum BullshitKind {
     FakeComplexity,
     CargoCult,
@@ -73,7 +73,7 @@ pub struct CodeAuditConfig {
     pub confidence_threshold: f32,
     pub max_file_bytes: u64,
     pub ignore_paths: Vec<String>,
-    pub ignore_kinds: HashSet<String>,
+    pub ignore_kinds: HashSet<BullshitKind>,
     /// Scan tests/, examples/, and benches/ in addition to src/. Default: false.
     pub include_tests: bool,
 }
@@ -214,7 +214,7 @@ pub fn scan_code(
     scan_function_complexity(&masked, &file, &mut alerts);
 
     alerts.retain(|alert| alert.confidence >= config.confidence_threshold);
-    alerts.retain(|alert| !config.ignore_kinds.contains(&format!("{:?}", alert.kind)));
+    alerts.retain(|alert| !config.ignore_kinds.contains(&alert.kind));
     dedupe_alerts(&mut alerts);
     Ok(alerts)
 }
@@ -226,9 +226,9 @@ pub fn config_from_policy(policy: Option<&crate::policy::Policy>) -> CodeAuditCo
         config
             .ignore_paths
             .clone_from(&policy.code_audit.ignore_paths);
-        config.ignore_kinds = policy.code_audit.ignore_kinds.iter().cloned().collect();
-        if policy.settings.min_confidence > 0.0 {
-            config.confidence_threshold = policy.settings.min_confidence;
+        config.ignore_kinds = policy.code_audit.ignore_kinds.iter().copied().collect();
+        if let Some(threshold) = policy.settings.min_confidence {
+            config.confidence_threshold = threshold;
         }
         if policy.code_audit.include_tests {
             config.include_tests = true;
@@ -966,7 +966,7 @@ fn main() {
     #[test]
     fn policy_suppresses_kind_and_path() {
         let mut cfg = config();
-        cfg.ignore_kinds.insert("UnwrapAbuse".to_string());
+        cfg.ignore_kinds.insert(BullshitKind::UnwrapAbuse);
         let alerts = scan_code("fn main() { thing().unwrap(); }", "src/main.rs", &cfg).unwrap();
         assert!(alerts.is_empty());
 

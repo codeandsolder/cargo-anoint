@@ -159,7 +159,7 @@ pub struct CodeAuditOpts {
     pub hardcoded: bool,
 
     /// Output findings as SARIF 2.1.0 JSON (for GitHub code-scanning / PR annotations).
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["json", "hardcoded"])]
     pub sarif: bool,
 
     /// Exit non-zero if any finding has confidence >= this value (0.0–1.0).

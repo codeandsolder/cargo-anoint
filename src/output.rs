@@ -396,11 +396,22 @@ pub struct JsonReportUnified<'a> {
     pub code_audit: Option<&'a CodeAuditReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hardcoded_values: Option<&'a [crate::bs_detector::BSHit]>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub security_advisories: Vec<crate::advisories::CrateAdvisories>,
+    pub security_advisories: crate::advisories::AdvisoryReport,
 }
 
-pub fn render_advisories(advisories: &[crate::advisories::CrateAdvisories]) {
+pub fn render_advisories(report: &crate::advisories::AdvisoryReport) {
+    use crate::advisories::AdvisoryReport;
+    let advisories = match report {
+        AdvisoryReport::Skipped => return,
+        AdvisoryReport::Unavailable { error } => {
+            eprintln!("OSV advisory check unavailable: {error}");
+            return;
+        }
+        AdvisoryReport::Complete { checked, findings } => {
+            println!("OSV checked {checked} direct crates.io package versions.");
+            findings
+        }
+    };
     if advisories.is_empty() {
         return;
     }
@@ -411,7 +422,9 @@ pub fn render_advisories(advisories: &[crate::advisories::CrateAdvisories]) {
         println!(
             "  {} {} {}",
             "⚠".yellow(),
-            hit.crate_name.yellow().bold(),
+            format!("{} {}", hit.crate_name, hit.version)
+                .yellow()
+                .bold(),
             format!("({count} advisory{})", if count == 1 { "" } else { "ies" }).dimmed()
         );
         for adv in &hit.advisories {
@@ -425,48 +438,23 @@ pub fn render_advisories(advisories: &[crate::advisories::CrateAdvisories]) {
         }
     }
     println!();
-    println!(
-        "{}",
-        "  Run `cargo audit` for patch guidance. Add affected crates to anoint.toml ignore_packages to suppress.".dimmed()
-    );
+    println!("{}", "  Run `cargo audit` for patch guidance.".dimmed());
 }
 
-pub fn render_unified_json(report: &JsonReportUnified<'_>) {
-    match serde_json::to_string_pretty(report) {
-        Ok(json) => println!("{json}"),
-        Err(e) => eprintln!("cargo-anoint: failed to serialize JSON output: {e}"),
-    }
+/// Write a machine-readable report to stdout.
+/// # Errors
+/// Returns serialization or output I/O errors.
+pub fn render_unified_json(report: &JsonReportUnified<'_>) -> anyhow::Result<()> {
+    write_json(report)
 }
 
-/// Legacy shape for compatibility (flat `dependency_suggestions` at top level).
-#[derive(Serialize)]
-pub struct JsonReport<'a> {
-    pub dependency_suggestions: &'a [Suggestion],
-    pub code_audit: Option<&'a CodeAuditReport>,
+fn write_json(value: &impl Serialize) -> anyhow::Result<()> {
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    serde_json::to_writer_pretty(&mut out, value)?;
+    writeln!(out)?;
+    Ok(())
 }
-
-/// Legacy narrow JSON (**`dependency_suggestions`** at top level) for crates embedding v0.1 output.
-pub fn render_json_report(suggestions: &[Suggestion], code_audit: Option<&CodeAuditReport>) {
-    let report = JsonReport {
-        dependency_suggestions: suggestions,
-        code_audit,
-    };
-    match serde_json::to_string_pretty(&report) {
-        Ok(json) => println!("{json}"),
-        Err(e) => eprintln!("cargo-anoint: failed to serialize JSON output: {e}"),
-    }
-}
-
-/// Render suggestions as a JSON array to stdout.
-/// Kept for library callers that rely on the old narrow JSON shape.
-pub fn render_json(suggestions: &[Suggestion]) {
-    match serde_json::to_string_pretty(suggestions) {
-        Ok(json) => println!("{json}"),
-        Err(e) => eprintln!("cargo-anoint: failed to serialize JSON output: {e}"),
-    }
-}
-
-// ── SARIF 2.1.0 output ───────────────────────────────────────────────────────
 
 #[derive(Serialize)]
 struct SarifRoot {
@@ -544,7 +532,10 @@ struct SarifMessage {
     text: String,
 }
 
-pub fn render_sarif(report: &CodeAuditReport) {
+/// Render SARIF to stdout.
+/// # Errors
+/// Returns serialization or output I/O errors.
+pub fn render_sarif(report: &CodeAuditReport) -> anyhow::Result<()> {
     use std::collections::BTreeMap;
 
     // Collect unique rule IDs for the driver rules table
@@ -605,8 +596,5 @@ pub fn render_sarif(report: &CodeAuditReport) {
         }],
     };
 
-    match serde_json::to_string_pretty(&sarif) {
-        Ok(json) => println!("{json}"),
-        Err(e) => eprintln!("cargo-anoint: failed to serialize SARIF output: {e}"),
-    }
+    write_json(&sarif)
 }

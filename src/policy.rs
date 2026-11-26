@@ -1,5 +1,6 @@
-//! Policy layer — parses anoint.toml for custom rules, overrides, and enforcement settings.
+//! Policy layer — parses anoint.toml for suppressions and enforcement settings.
 
+use crate::code_audit::BullshitKind;
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -8,11 +9,8 @@ use std::path::Path;
 
 /// Top-level policy configuration loaded from anoint.toml.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct Policy {
-    /// Custom suggestion rules to add or override defaults.
-    #[serde(default)]
-    pub rules: Vec<PolicyRule>,
-
     /// Packages to exclude from analysis entirely.
     #[serde(default)]
     pub ignore_packages: Vec<String>,
@@ -21,7 +19,7 @@ pub struct Policy {
     #[serde(default)]
     pub fail_on: Option<Vec<String>>,
 
-    /// Per-package overrides (e.g., pin a version, suppress specific rules).
+    /// Per-package suggestion suppressions.
     #[serde(default)]
     pub packages: HashMap<String, PackagePolicy>,
 
@@ -38,52 +36,25 @@ pub struct Policy {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct OverlapException {
     pub package: String,
     pub providers: Vec<String>,
     pub reason: String,
 }
 
-/// A custom rule from anoint.toml.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PolicyRule {
-    /// Crate name or combo pattern (e.g., "`reqwest+serde_json`").
-    pub pattern: String,
-
-    /// Recommended replacement.
-    pub replacement: String,
-
-    /// Reason for the suggestion.
-    pub reason: String,
-
-    /// Kind of suggestion. Defaults to "`modern_alternative`" if omitted.
-    #[serde(default = "default_rule_kind")]
-    pub kind: String,
-
-    /// Optional condition (e.g., "version < 0.12").
-    pub condition: Option<String>,
-}
-
-fn default_rule_kind() -> String {
-    "modern_alternative".to_string()
-}
-
 /// Per-package policy overrides.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct PackagePolicy {
     /// Suppress all suggestions for this package.
     #[serde(default)]
     pub suppress: bool,
-
-    /// Pin to a specific version (prevents upgrade suggestions).
-    pub pin_version: Option<String>,
-
-    /// Custom reason for keeping the current dependency.
-    pub keep_reason: Option<String>,
 }
 
 /// Global policy settings.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct PolicySettings {
     /// Whether to run in offline mode by default.
     #[serde(default)]
@@ -96,12 +67,13 @@ pub struct PolicySettings {
     #[serde(default)]
     pub fail_on_overlap: bool,
 
-    /// Reserved confidence threshold for future machine-assisted suggestions.
+    /// Optional minimum confidence for source audit findings.
     #[serde(default)]
-    pub min_confidence: f32,
+    pub min_confidence: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct CodeAuditPolicy {
     /// Suppress findings in paths containing any of these strings.
     #[serde(default)]
@@ -109,18 +81,11 @@ pub struct CodeAuditPolicy {
 
     /// Suppress findings with these kind names, e.g. "`UnwrapAbuse`".
     #[serde(default)]
-    pub ignore_kinds: Vec<String>,
+    pub ignore_kinds: Vec<BullshitKind>,
 
     /// Also scan tests/, examples/, and benches/ (default: false — src/ only).
     #[serde(default)]
     pub include_tests: bool,
-}
-
-/// Load policy from a anoint.toml file at the given path.
-/// Returns None if the file does not exist or cannot be parsed.
-#[must_use = "Returns the policy if it could be read"]
-pub fn load_policy(path: &Path) -> Option<Policy> {
-    try_load_policy(path).ok()
 }
 
 /// Load policy from a anoint.toml file at the given path.
@@ -134,7 +99,10 @@ pub fn try_load_policy(path: &Path) -> anyhow::Result<Policy> {
     let policy: Policy = toml_edit::de::from_str(&content)
         .with_context(|| format!("failed to parse policy {}", path.display()))?;
     anyhow::ensure!(
-        (0.0..=1.0).contains(&policy.settings.min_confidence),
+        policy
+            .settings
+            .min_confidence
+            .is_none_or(|value| (0.0..=1.0).contains(&value)),
         "min_confidence must be between 0 and 1"
     );
     for entry in &policy.allow_overlap {
@@ -160,7 +128,7 @@ pub fn try_load_policy(path: &Path) -> anyhow::Result<Policy> {
 
 /// Filter suggestions based on policy rules.
 /// - Removes suggestions for ignored packages.
-/// - Applies per-package suppress/pin overrides.
+/// - Applies per-package suppressions.
 #[must_use = "Returns the filtered findings"]
 pub fn apply_policy(
     suggestions: Vec<crate::suggestions::Suggestion>,
@@ -208,24 +176,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_load_policy_from_string() {
+    fn test_load_policy_from_string() -> anyhow::Result<()> {
         let toml_content = r#"
 ignore_packages = ["ignored_dep"]
-
-[[rules]]
-pattern = "old_crate"
-replacement = "new_crate"
-reason = "old_crate is unmaintained"
-kind = "modern_alternative"
 
 [packages.foo]
 suppress = true
 "#;
-        let policy: Policy = toml_edit::de::from_str(toml_content).unwrap();
-        assert_eq!(policy.rules.len(), 1);
-        assert_eq!(policy.rules[0].pattern, "old_crate");
+        let policy: Policy = toml_edit::de::from_str(toml_content)?;
         assert!(policy.ignore_packages.iter().any(|i| i == "ignored_dep"));
-        assert!(policy.packages.get("foo").unwrap().suppress);
+        assert!(policy.packages.get("foo").is_some_and(|p| p.suppress));
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_unknown_policy_fields_and_audit_kinds() {
+        for input in [
+            "unknown = true",
+            "[settings]\nfail_on_overlaps = true",
+            "[packages.foo]\npin_version = \"1.0\"",
+            "[code_audit]\nignore_kinds = [\"UnwarpAbuse\"]",
+        ] {
+            assert!(toml_edit::de::from_str::<Policy>(input).is_err(), "{input}");
+        }
+    }
+
+    #[test]
+    fn explicit_zero_confidence_is_distinct_from_default() -> anyhow::Result<()> {
+        let policy: Policy = toml_edit::de::from_str("[settings]\nmin_confidence = 0.0")?;
+        let config = crate::code_audit::config_from_policy(Some(&policy));
+        assert_eq!(config.confidence_threshold, 0.0);
+        assert!(crate::code_audit::config_from_policy(None).confidence_threshold > 0.0);
+        Ok(())
     }
 
     #[test]
@@ -233,11 +215,7 @@ suppress = true
         let policy = Policy {
             packages: HashMap::from_iter([(
                 "lazy_static".to_string(),
-                PackagePolicy {
-                    suppress: true,
-                    pin_version: None,
-                    keep_reason: None,
-                },
+                PackagePolicy { suppress: true },
             )]),
             ..Default::default()
         };
