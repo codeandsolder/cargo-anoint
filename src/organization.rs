@@ -132,7 +132,6 @@ pub(crate) fn analyze(deps: &[ResolvedDep], package: Option<&str>) -> Vec<Sugges
             .expect("embedded organization policy must be valid")
     });
     let direct: Vec<_> = deps.iter().filter(|dep| dep.is_direct).collect();
-    let names: BTreeSet<&str> = direct.iter().map(|dep| dep.name.as_str()).collect();
     let mut results = Vec::new();
 
     for fork in &policy.forks {
