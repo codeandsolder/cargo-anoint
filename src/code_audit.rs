@@ -405,12 +405,12 @@ impl DiffFilter {
             if path.extension().is_none_or(|ext| ext != "rs") {
                 continue;
             }
-            let patch = git_diff(
+            let diff_bytes = git_diff(
                 base_dir,
                 &["--unified=0", "--no-ext-diff", "--no-textconv"],
                 Some(&path),
             )?;
-            let ranges: Vec<_> = String::from_utf8(patch)
+            let ranges: Vec<_> = String::from_utf8(diff_bytes)
                 .context("Git patch is not UTF-8")?
                 .lines()
                 .filter_map(parse_hunk_new_range)

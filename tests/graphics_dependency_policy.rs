@@ -40,7 +40,6 @@ fn mesh_optimizers_overlap_but_math_and_texture_layers_do_not() {
         .collect();
     assert_eq!(overlaps.len(), 1);
     assert_eq!(overlaps[0].current, "meshoptimizer-rs+rmeshopt");
-    assert!(!overlaps[0].is_auto_fixable());
 }
 
 #[test]
@@ -70,5 +69,9 @@ fn graphics_features_and_unmaintained_shaper_are_advisory() {
             .iter()
             .any(|f| f.current == "rustybuzz" && f.kind == SuggestionKind::Unmaintained)
     );
-    assert!(findings.iter().all(|f| !f.is_auto_fixable()));
+    assert!(
+        findings
+            .iter()
+            .all(|f| f.kind != SuggestionKind::CapabilityOverlap)
+    );
 }

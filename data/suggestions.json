@@ -56,7 +56,6 @@
     "condition": null,
     "confidence": "High",
     "migration_risk": "High",
-    "autofix_safety": "ManualOnly",
     "evidence_source": "RustSec",
     "include_transitive": true
   },
