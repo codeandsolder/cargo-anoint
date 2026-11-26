@@ -18,16 +18,11 @@ exclude = [
     ".coderabbit.yaml",
     ".agents/",
     "bullshitdetector/",
-    "docs/phase3-workspace-design.md",
 ]
 
 [[bin]]
 name = "cargo-anoint"
 path = "src/main.rs"
-
-[[bin]]
-name = "update-suggestions"
-path = "src/bin/update_suggestions.rs"
 
 [dependencies]
 # CLI

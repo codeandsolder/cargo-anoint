@@ -15,7 +15,7 @@
 | `output` | Human-readable reports, JSON helpers (`JsonReportUnified`), code-audit summary, advisory rendering |
 | `updater` | `cargo anoint --update-rules` — fetch candidate rules from blessed.rs JSON for manual review |
 | `code_audit` | Static bullshit-detector pass; discovers package source roots and targets using Cargo metadata; masks comments, literals and test-only items via tree-sitter; shares source traversal and diff filtering with the optional hardcoded-value scanner |
-| `bs_detector` | Hardcoded-value scanner (`--hardcoded`): magic numbers, API keys, IPs, URLs, credentials |
+| `bs_detector` | Hardcoded-value scanner (`--hardcoded`): Rust syntax-tree literals, named credential bindings, timing expressions, IPs, URLs and absolute paths |
 
 ## Typical `cargo anoint` flow
 
@@ -32,6 +32,6 @@
 ## Data flow boundaries
 
 - **Trust metadata** on suggestions (`impact`, `confidence`, `migration_risk`, `evidence_source`) is rule-driven. All recommendations require manual review; dependency scans do not rewrite manifests.
-- **Code audit** discovers Cargo target paths without dependency resolution, scans selected package source trees and uses tree-sitter-rust to mask comments, literals and test-only items before running heuristic detectors. Hardcoded findings share source selection and diff filtering.
+- **Code audit** discovers Cargo target paths without dependency resolution, scans selected package source trees and uses tree-sitter-rust to mask comments, literals and test-only items before running heuristic detectors. Hardcoded findings use the same syntax-tree walk, source selection and diff filtering. Code quality rules are heuristics rather than type-resolved diagnoses.
 - **`cargo anoint bs`** is read-only; findings require an explicit, semantics-preserving source change.
 - **`--feedback`** always runs suggestion analysis + full code audit for the chosen manifest but does **not** perform crates.io/GitHub/osv.dev fetches — intended for voluntary, low-leak summaries.

@@ -1,3 +1,8 @@
+//! Read-only Cargo dependency modernization and Rust source audit.
+//!
+//! The reviewed suggestion catalog is authoritative; live metadata provides
+//! optional context, never changes the catalog or rewrites project source.
+
 pub mod advisories;
 pub mod bs_detector;
 pub mod code_audit;

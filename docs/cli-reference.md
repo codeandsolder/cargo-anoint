@@ -65,7 +65,7 @@ Top-level fields:
 | `--sarif` | Output findings as SARIF 2.1.0 JSON (for `upload-sarif` in GitHub Actions). |
 | `--diff` | Audit only tracked lines changed in `git diff HEAD`, including hardcoded findings when requested. |
 | `--include-tests` | Include test-only source items and conventional test, example and benchmark trees. |
-| `--hardcoded` | Also scan for hardcoded values: magic numbers, API keys, IPs, URLs, credentials. |
+| `--hardcoded` | Also inspect parsed Rust literals for nontrivial numbers, named credentials, timing expressions, IPs, URLs and absolute paths. Findings require review. |
 | `--fail-on-confidence=FLOAT` | Exit non-zero if any retained source-quality finding has confidence ≥ this value (0.0–1.0); lowers the reporting threshold if necessary. Hardcoded findings have no confidence score. |
 | `--verbose` | Show every finding instead of a concise summary. |
 
