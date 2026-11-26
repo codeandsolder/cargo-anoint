@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
+use cargo_metadata::semver::Version;
 use clap::Parser;
 use colored::Colorize;
 
@@ -36,13 +37,13 @@ const fn use_tagged_suggestions(opts: &cli::AnointOpts) -> bool {
 
 fn unique_direct_registry_dependency_versions<'a>(
     snapshots: impl Iterator<Item = &'a cargo_anoint::parser::PackageResult>,
-) -> Vec<(&'a str, &'a str)> {
+) -> Vec<(&'a str, &'a Version)> {
     let mut seen = std::collections::HashSet::new();
     snapshots
         .flat_map(|snapshot| snapshot.deps.iter())
         .filter(|dependency| dependency.is_direct() && dependency.is_crates_io())
         .filter_map(|dependency| {
-            let key = (dependency.name.as_str(), dependency.version.as_str());
+            let key = (dependency.name.as_str(), &dependency.version);
             seen.insert(key).then_some(key)
         })
         .collect()
@@ -233,7 +234,7 @@ impl DependencyScan {
                      suggestions: sug,
                  }| cargo_anoint::output::JsonPackageOutput {
                     name: snap.name.as_str(),
-                    version: snap.version.as_str(),
+                    version: &snap.version,
                     manifest_path: snap.manifest_path.display().to_string(),
                     dependency_suggestions: sug.as_slice(),
                 },
@@ -339,7 +340,7 @@ impl DependencyScan {
                      suggestions: sug,
                  }| cargo_anoint::output::PackageSuggestionView {
                     name: snap.name.as_str(),
-                    version: snap.version.as_str(),
+                    version: &snap.version,
                     manifest_path: snap.manifest_path.as_path(),
                     suggestions: sug.as_slice(),
                     registry_names: registry_names(&snap.deps),
@@ -382,7 +383,7 @@ fn print_dependency_summary(snapshots: &[&cargo_anoint::parser::PackageResult]) 
                 "  {} {} {}{}",
                 "•".green(),
                 dep.name.bold(),
-                dep.version.dimmed(),
+                dep.version.to_string().dimmed(),
                 features_str.dimmed()
             );
         }
@@ -406,7 +407,7 @@ fn print_dependency_summary(snapshots: &[&cargo_anoint::parser::PackageResult]) 
                 "  {} {} v{} — {direct} direct, {total} total ({})",
                 "•".green(),
                 snap.name.bold(),
-                snap.version.dimmed(),
+                snap.version.to_string().dimmed(),
                 snap.manifest_path.display().to_string().dimmed()
             );
         }
@@ -842,7 +843,7 @@ mod registry_tests {
     fn dependency(name: &str, source: Option<&str>) -> ResolvedDep {
         ResolvedDep {
             name: name.into(),
-            version: "1.0.0".into(),
+            version: cargo_metadata::semver::Version::new(1, 0, 0),
             enabled_features: Vec::new(),
             available_features: Vec::new(),
             source: source.map(str::to_owned),

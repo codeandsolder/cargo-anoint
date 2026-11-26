@@ -88,6 +88,26 @@ impl Default for CodeAuditConfig {
     }
 }
 
+impl CodeAuditConfig {
+    fn validate(&self) -> Result<()> {
+        anyhow::ensure!(
+            (0.0..=1.0).contains(&self.confidence_threshold),
+            "confidence threshold must be between 0 and 1"
+        );
+        anyhow::ensure!(
+            self.max_file_bytes > 0,
+            "source file limit must be positive"
+        );
+        anyhow::ensure!(
+            self.ignore_paths
+                .iter()
+                .all(|pattern| !pattern.trim().is_empty()),
+            "ignore paths must not contain empty patterns"
+        );
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodeAuditReport {
     pub files_scanned: usize,
@@ -152,6 +172,7 @@ pub fn scan_project_with_options(
     config: &CodeAuditConfig,
     options: AuditOptions,
 ) -> Result<ProjectAudit> {
+    config.validate()?;
     let mut hardcoded_values = options.hardcoded.then(Vec::new);
     let mut files = source_files(manifest_path, config)?;
     let diff_filter = if options.diff_only {
@@ -210,6 +231,7 @@ pub fn scan_code(
     file: impl Into<PathBuf>,
     config: &CodeAuditConfig,
 ) -> Result<Vec<BullshitAlert>> {
+    config.validate()?;
     let file = file.into();
     if is_ignored_path(&file, config) {
         return Ok(Vec::new());
@@ -1288,6 +1310,27 @@ mod inline {
             .collect()
         );
         Ok(())
+    }
+
+    #[test]
+    fn invalid_scan_config_is_an_error_not_a_clean_report() {
+        for threshold in [f32::NAN, f32::INFINITY, -0.01, 1.01] {
+            let cfg = CodeAuditConfig {
+                confidence_threshold: threshold,
+                ..config()
+            };
+            assert!(scan_code("fn f() {}", "lib.rs", &cfg).is_err());
+        }
+        let cfg = CodeAuditConfig {
+            max_file_bytes: 0,
+            ..config()
+        };
+        assert!(scan_code("", "lib.rs", &cfg).is_err());
+        let cfg = CodeAuditConfig {
+            ignore_paths: vec![String::new()],
+            ..config()
+        };
+        assert!(scan_code("", "lib.rs", &cfg).is_err());
     }
 
     #[test]

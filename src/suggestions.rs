@@ -207,7 +207,7 @@ mod tests {
         let deps = vec![
             ResolvedDep {
                 name: "lazy_static".into(),
-                version: "1.5.0".into(),
+                version: cargo_metadata::semver::Version::new(1, 5, 0),
                 enabled_features: vec![],
                 available_features: vec![],
                 source: Some("registry".into()),
@@ -217,7 +217,7 @@ mod tests {
             },
             ResolvedDep {
                 name: "serde".into(),
-                version: "1.0.0".into(),
+                version: cargo_metadata::semver::Version::new(1, 0, 0),
                 enabled_features: vec![],
                 available_features: vec![],
                 source: Some("registry".into()),
@@ -239,7 +239,7 @@ mod tests {
         let deps = vec![
             ResolvedDep {
                 name: "reqwest".into(),
-                version: "0.12.0".into(),
+                version: cargo_metadata::semver::Version::new(0, 12, 0),
                 enabled_features: vec![],
                 available_features: vec![],
                 source: Some("registry".into()),
@@ -249,7 +249,7 @@ mod tests {
             },
             ResolvedDep {
                 name: "some_unused_crate".into(),
-                version: "1.0.0".into(),
+                version: cargo_metadata::semver::Version::new(1, 0, 0),
                 enabled_features: vec![],
                 available_features: vec![],
                 source: Some("registry".into()),
@@ -297,7 +297,7 @@ mod tests {
         // Only reqwest present, no serde_json — combo should NOT fire
         let deps = vec![ResolvedDep {
             name: "reqwest".into(),
-            version: "0.12.0".into(),
+            version: cargo_metadata::semver::Version::new(0, 12, 0),
             enabled_features: vec![],
             available_features: vec![],
             source: Some("registry".into()),
@@ -320,7 +320,7 @@ mod tests {
         let rules = load_rules().unwrap();
         let deps = vec![ResolvedDep {
             name: "lazy_static".into(),
-            version: "1.5.0".into(),
+            version: cargo_metadata::semver::Version::new(1, 5, 0),
             enabled_features: vec![],
             available_features: vec![],
             source: Some("registry".into()),
@@ -342,7 +342,7 @@ mod tests {
         let deps = vec![
             ResolvedDep {
                 name: "lazy_static".into(),
-                version: "1.5.0".into(),
+                version: cargo_metadata::semver::Version::new(1, 5, 0),
                 enabled_features: vec![],
                 available_features: vec![],
                 source: Some("registry".into()),
@@ -352,7 +352,7 @@ mod tests {
             },
             ResolvedDep {
                 name: "structopt".into(),
-                version: "0.3.0".into(),
+                version: cargo_metadata::semver::Version::new(0, 3, 0),
                 enabled_features: vec![],
                 available_features: vec![],
                 source: Some("registry".into()),
@@ -362,7 +362,7 @@ mod tests {
             },
             ResolvedDep {
                 name: "memmap".into(),
-                version: "0.7.0".into(),
+                version: cargo_metadata::semver::Version::new(0, 7, 0),
                 enabled_features: vec![],
                 available_features: vec![],
                 source: Some("registry".into()),
@@ -388,7 +388,7 @@ mod tests {
         let deps = vec![
             ResolvedDep {
                 name: "clap".into(),
-                version: "4.5.0".into(),
+                version: cargo_metadata::semver::Version::new(4, 5, 0),
                 enabled_features: vec!["derive".into()],
                 available_features: vec![],
                 source: Some("registry".into()),
@@ -398,7 +398,7 @@ mod tests {
             },
             ResolvedDep {
                 name: "serde".into(),
-                version: "1.0.0".into(),
+                version: cargo_metadata::semver::Version::new(1, 0, 0),
                 enabled_features: vec!["derive".into()],
                 available_features: vec![],
                 source: Some("registry".into()),
@@ -430,7 +430,7 @@ mod tests {
     fn unmaintained_fxhash_is_reported_transitively() {
         let dep = ResolvedDep {
             name: "fxhash".into(),
-            version: "0.2.1".into(),
+            version: cargo_metadata::semver::Version::new(0, 2, 1),
             enabled_features: vec![],
             available_features: vec![],
             source: None,

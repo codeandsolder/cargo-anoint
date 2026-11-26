@@ -6,6 +6,7 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result, ensure};
+use cargo_metadata::semver::Version;
 use serde::{Deserialize, Serialize};
 
 const OSV_BATCH_URL: &str = "https://api.osv.dev/v1/querybatch";
@@ -87,12 +88,12 @@ struct OsvVuln {
 /// Each tuple is `(crate_name, resolved_version)`. OSV uses the version to
 /// filter out historical advisories that do not affect the installed release.
 pub async fn fetch_advisories_batch_for_versions(
-    crate_versions: &[(&str, &str)],
+    crate_versions: &[(&str, &Version)],
 ) -> Result<Vec<CrateAdvisories>> {
     fetch_advisories(versioned_queries(crate_versions)).await
 }
 
-fn versioned_queries(crate_versions: &[(&str, &str)]) -> Vec<OsvPackageQuery> {
+fn versioned_queries(crate_versions: &[(&str, &Version)]) -> Vec<OsvPackageQuery> {
     crate_versions
         .iter()
         .map(|(name, version)| OsvPackageQuery {
@@ -180,7 +181,7 @@ mod tests {
     #[test]
     fn versioned_queries_serialize_the_exact_version() {
         let request = OsvBatchRequest {
-            queries: versioned_queries(&[("anyhow", "1.0.103")]),
+            queries: versioned_queries(&[("anyhow", &Version::new(1, 0, 103))]),
         };
 
         let json = serde_json::to_value(request).expect("serialize OSV request");
@@ -192,7 +193,7 @@ mod tests {
     #[test]
     fn incomplete_batch_is_not_a_clean_scan() -> Result<()> {
         let request = OsvBatchRequest {
-            queries: versioned_queries(&[("anyhow", "1.0.103")]),
+            queries: versioned_queries(&[("anyhow", &Version::new(1, 0, 103))]),
         };
         let response = serde_json::from_str(r#"{"results":[]}"#)?;
         assert!(match_results(request, response).is_err());
@@ -202,7 +203,10 @@ mod tests {
     #[test]
     fn findings_keep_the_queried_version() -> Result<()> {
         let request = OsvBatchRequest {
-            queries: versioned_queries(&[("example", "1.0.0"), ("example", "2.0.0")]),
+            queries: versioned_queries(&[
+                ("example", &Version::new(1, 0, 0)),
+                ("example", &Version::new(2, 0, 0)),
+            ]),
         };
         let response =
             serde_json::from_str(r#"{"results":[{"vulns":[{"id":"RUSTSEC-example"}]},{}]}"#)?;

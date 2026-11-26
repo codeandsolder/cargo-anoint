@@ -1,6 +1,7 @@
 //! Curated organization preferences and potential capability overlaps.
 use std::collections::{BTreeMap, BTreeSet};
 
+use cargo_metadata::semver::Version;
 use serde::Deserialize;
 
 use crate::parser::ResolvedDep;
@@ -74,17 +75,25 @@ struct VersionFamily {
 #[serde(deny_unknown_fields)]
 struct VersionFamilyMember {
     package: String,
-    version_component: usize,
+    version_component: VersionComponent,
 }
 
-fn version_component(version: &str, component: usize) -> Option<u64> {
-    version
-        .split(['-', '+'])
-        .next()?
-        .split('.')
-        .nth(component)?
-        .parse()
-        .ok()
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum VersionComponent {
+    Major,
+    Minor,
+    Patch,
+}
+
+impl VersionComponent {
+    const fn get(self, version: &Version) -> u64 {
+        match self {
+            Self::Major => version.major,
+            Self::Minor => version.minor,
+            Self::Patch => version.patch,
+        }
+    }
 }
 
 /// Cargo's resolved source is authoritative: repository metadata is often inherited
@@ -241,7 +250,7 @@ fn append_version_findings(
 ) {
     // Cargo metadata may include optional or target-specific packages. These
     // findings describe the selected resolution, not guaranteed compiled units.
-    let mut versions = BTreeMap::<&str, BTreeSet<&str>>::new();
+    let mut versions = BTreeMap::<&str, BTreeSet<&Version>>::new();
     for dep in deps {
         versions.entry(&dep.name).or_default().insert(&dep.version);
     }
@@ -252,7 +261,11 @@ fn append_version_findings(
                 "one compatible resolved version where upstream constraints permit".into(),
                 format!(
                     "Multiple versions in the reachable Cargo resolution: {}. Inspect inverse dependency trees, enabled features and target/build/dev roles before consolidating; do not force incompatible APIs.",
-                    resolved.iter().copied().collect::<Vec<_>>().join(", ")
+                    resolved
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ),
                 SuggestionKind::ModernAlternative,
                 package,
@@ -267,13 +280,12 @@ fn append_version_findings(
         for member in &family.members {
             if let Some(resolved) = versions.get(member.package.as_str()) {
                 for version in resolved {
-                    if let Some(generation) = version_component(version, member.version_component) {
-                        generations
-                            .entry(generation)
-                            .or_default()
-                            .insert(format!("{}@{version}", member.package));
-                        members.insert(member.package.as_str());
-                    }
+                    let generation = member.version_component.get(version);
+                    generations
+                        .entry(generation)
+                        .or_default()
+                        .insert(format!("{}@{version}", member.package));
+                    members.insert(member.package.as_str());
                 }
             }
         }
@@ -360,7 +372,7 @@ mod tests {
     fn dep(name: &str, source: Option<&str>, direct: bool) -> ResolvedDep {
         ResolvedDep {
             name: name.into(),
-            version: "1.0.0".into(),
+            version: cargo_metadata::semver::Version::new(1, 0, 0),
             enabled_features: vec![],
             available_features: vec![],
             source: source.map(str::to_owned),
@@ -590,15 +602,26 @@ mod tests {
     }
 
     #[test]
+    fn release_generation_is_typed_and_ignores_prerelease_metadata() -> anyhow::Result<()> {
+        let version = Version::parse("1.263.4-rc.1+build.2")?;
+        assert_eq!(VersionComponent::Major.get(&version), 1);
+        assert_eq!(VersionComponent::Minor.get(&version), 263);
+        assert_eq!(VersionComponent::Patch.get(&version), 4);
+        assert!(serde_json::from_str::<VersionComponent>("3").is_err());
+        assert!(serde_json::from_str::<VersionComponent>(r#""invalid""#).is_err());
+        Ok(())
+    }
+
+    #[test]
     fn reports_version_splits_without_gating_the_resolution() {
         let mut old = dep("wasmparser", None, false);
-        old.version = "0.248.0".into();
+        old.version = cargo_metadata::semver::Version::new(0, 248, 0);
         let mut new = old.clone();
-        new.version = "0.263.0".into();
+        new.version = cargo_metadata::semver::Version::new(0, 263, 0);
         let mut wat = dep("wat", None, true);
-        wat.version = "1.263.0".into();
+        wat.version = cargo_metadata::semver::Version::new(1, 263, 0);
         let mut wast = dep("wast", None, false);
-        wast.version = "263.0.0".into();
+        wast.version = cargo_metadata::semver::Version::new(263, 0, 0);
         assert!(analyze(&[new.clone(), wat.clone(), wast.clone()], None).is_empty());
         let findings = analyze(&[old, new, wat, wast], None);
         assert_eq!(findings.len(), 2);

@@ -7,7 +7,7 @@ use cargo_metadata::DependencyKind;
 fn dependency(name: &str, direct: bool) -> ResolvedDep {
     ResolvedDep {
         name: name.into(),
-        version: "1.0.0".into(),
+        version: cargo_metadata::semver::Version::new(1, 0, 0),
         enabled_features: vec![],
         available_features: vec![],
         source: None,

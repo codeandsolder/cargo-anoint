@@ -2,6 +2,7 @@
 //! using `cargo_metadata` for feature-aware resolution.
 
 use anyhow::{Context, Result, bail};
+use cargo_metadata::semver::Version;
 use cargo_metadata::{
     CargoOpt, DependencyKind, MetadataCommand, Node, Package, PackageId, Resolve,
 };
@@ -13,7 +14,7 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone)]
 pub struct ResolvedDep {
     pub name: String,
-    pub version: String,
+    pub version: Version,
     /// Features that are **actually enabled** in the resolved build plan.
     pub enabled_features: Vec<String>,
     /// All features **declared** by the crate (available but not necessarily enabled).
@@ -48,7 +49,7 @@ impl ResolvedDep {
 #[derive(Debug, Clone)]
 pub struct PackageResult {
     pub name: String,
-    pub version: String,
+    pub version: Version,
     pub manifest_path: PathBuf,
     pub deps: Vec<ResolvedDep>,
 }
@@ -200,7 +201,7 @@ fn fetch_metadata_and_snapshots(
         let deps = resolve_deps_for_root(&pkg.id, resolve, &pkg_map, &node_map, all_targets)?;
         out.push(PackageResult {
             name: pkg.name.clone(),
-            version: pkg.version.to_string(),
+            version: pkg.version.clone(),
             manifest_path: PathBuf::from(pkg.manifest_path.as_str()),
             deps,
         });
@@ -346,7 +347,7 @@ fn resolve_deps_for_root(
 
         deps.push(ResolvedDep {
             name: pkg.name.clone(),
-            version: pkg.version.to_string(),
+            version: pkg.version.clone(),
             enabled_features,
             available_features,
             source: pkg.source.as_ref().map(std::string::ToString::to_string),

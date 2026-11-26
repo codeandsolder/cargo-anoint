@@ -707,27 +707,27 @@
       "members": [
         {
           "package": "wasmparser",
-          "version_component": 1
+          "version_component": "minor"
         },
         {
           "package": "wasm-encoder",
-          "version_component": 1
+          "version_component": "minor"
         },
         {
           "package": "wasmprinter",
-          "version_component": 1
+          "version_component": "minor"
         },
         {
           "package": "wasm-smith",
-          "version_component": 1
+          "version_component": "minor"
         },
         {
           "package": "wat",
-          "version_component": 1
+          "version_component": "minor"
         },
         {
           "package": "wast",
-          "version_component": 0
+          "version_component": "major"
         }
       ],
       "notes": "Align compatible parser, encoder, printer, WAT and fuzz generator releases; independent upstream pins or distinct tool boundaries can justify a split."

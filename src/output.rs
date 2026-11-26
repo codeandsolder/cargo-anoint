@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::BuildHasher;
 use std::path::Path;
 
+use cargo_metadata::semver::Version;
 use colored::Colorize;
 use serde::Serialize;
 
@@ -77,7 +78,7 @@ fn print_suggestion_detail<S: BuildHasher>(
 #[derive(Debug)]
 pub struct PackageSuggestionView<'a> {
     pub name: &'a str,
-    pub version: &'a str,
+    pub version: &'a Version,
     pub manifest_path: &'a Path,
     pub suggestions: &'a [Suggestion],
     /// Names backed exclusively by crates.io packages in this member's resolved graph.
@@ -369,7 +370,7 @@ mod tests {
 #[derive(Serialize)]
 pub struct JsonPackageOutput<'a> {
     pub name: &'a str,
-    pub version: &'a str,
+    pub version: &'a Version,
     pub manifest_path: String,
     pub dependency_suggestions: &'a [Suggestion],
 }
