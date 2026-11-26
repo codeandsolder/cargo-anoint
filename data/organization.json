@@ -542,6 +542,14 @@
       ],
       "preferred": "Jiff for new date/time formatting and calendrical operations where compatible",
       "notes": "Consolidate if Jiff is already required. Evaluate supported timestamp range, time zones, serialization formats and WASM support before migrating; not a drop-in type alias."
+    },
+    {
+      "packages": [
+        "compression-codecs"
+      ],
+      "preferred": "enable flate2 zlib-rs backend when used for gzip/deflate",
+      "notes": "The shared compression-backend patch disables flate2 default features and enables zlib-rs. Preserve compression format behavior; other enabled flate2 consumers can still activate miniz_oxide.",
+      "include_transitive": true
     }
   ],
   "feature_preferences": [
