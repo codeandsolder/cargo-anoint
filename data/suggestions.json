@@ -568,5 +568,18 @@
     "autofix_safety": "ManualOnly",
     "evidence_source": "StdDocs",
     "include_transitive": true
+  },
+  {
+    "pattern": "fs_extra",
+    "replacement": "std::fs::copy, read_dir and create_dir for focused tree copies",
+    "kind": "StdReplacement",
+    "reason": "Simple file and directory copying can use standard filesystem operations. Preserve symlink behavior, permissions, overwrite policy, cleanup and handling of special files; keep a dedicated library for more complex requirements.",
+    "source": "https://doc.rust-lang.org/std/fs/",
+    "condition": "Only simple, well-defined copy operations",
+    "confidence": "Medium",
+    "migration_risk": "Medium",
+    "autofix_safety": "ManualOnly",
+    "evidence_source": "StdDocs",
+    "include_transitive": true
   }
 ]

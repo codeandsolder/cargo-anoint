@@ -549,7 +549,8 @@
       ],
       "preferred": "enable flate2 zlib-rs backend when used for gzip/deflate",
       "notes": "The shared compression-backend patch disables flate2 default features and enables zlib-rs. Preserve compression format behavior; other enabled flate2 consumers can still activate miniz_oxide.",
-      "include_transitive": true
+      "include_transitive": true,
+      "satisfied_repository": "cargo-patches"
     }
   ],
   "feature_preferences": [

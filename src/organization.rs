@@ -39,6 +39,8 @@ struct Preference {
     packages: Vec<String>,
     #[serde(default)]
     include_transitive: bool,
+    #[serde(default)]
+    satisfied_repository: Option<String>,
     preferred: String,
     notes: String,
 }
@@ -158,9 +160,18 @@ pub(crate) fn analyze(deps: &[ResolvedDep], package: Option<&str>) -> Vec<Sugges
 
     for preference in &policy.preferences {
         for name in &preference.packages {
-            if names.contains(name.as_str())
-                || (preference.include_transitive && deps.iter().any(|dep| &dep.name == name))
-            {
+            if deps.iter().any(|dep| {
+                &dep.name == name
+                    && (dep.is_direct || preference.include_transitive)
+                    && !preference
+                        .satisfied_repository
+                        .as_ref()
+                        .is_some_and(|repository| {
+                            dep.source
+                                .as_deref()
+                                .is_some_and(|source| preferred_source(source, repository))
+                        })
+            }) {
                 results.push(finding(
                     name.clone(),
                     preference.preferred.clone(),
@@ -500,6 +511,20 @@ mod tests {
             .iter()
             .any(|f| f.kind == SuggestionKind::CapabilityOverlap));
     }
+    #[test]
+    fn shared_patch_satisfies_source_specific_preference() {
+        let patched = dep("compression-codecs", Some("git+https://github.com/codeandsolder/cargo-patches.git?branch=generated/compression-backend#abc"), false);
+        let registry = dep(
+            "compression-codecs",
+            Some("registry+https://github.com/rust-lang/crates.io-index"),
+            false,
+        );
+        assert!(analyze(&[patched.clone()], None).is_empty());
+        assert!(analyze(&[patched, registry], None)
+            .iter()
+            .any(|finding| finding.current == "compression-codecs"));
+    }
+
     #[test]
     fn reports_version_splits_without_gating_the_resolution() {
         let mut old = dep("wasmparser", None, false);
