@@ -575,7 +575,7 @@ mod tests {
             Some("registry+https://github.com/rust-lang/crates.io-index"),
             false,
         );
-        assert!(analyze(&[patched.clone()], None).is_empty());
+        assert!(analyze(std::slice::from_ref(&patched), None).is_empty());
         assert!(
             analyze(&[patched, registry], None)
                 .iter()
