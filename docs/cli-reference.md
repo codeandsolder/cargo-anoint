@@ -33,7 +33,7 @@ Invoked as `cargo anoint …` once `cargo-anoint` is on your `PATH` (`cargo inst
 | `--summary` | Short dependency summary (**no intel**). Cannot combine with **`--audit-code`**. |
 | `--fail-on=L[,…]` | Exit **non-zero** if any retained suggestion's **`impact`** is in **`{low, medium, high}`**. |
 | `--workspace` | Analyze **every** `workspace.members` entry once. |
-| `--package=P[,…]` | Restrict to workspace members by **`[package].name`** (comma-separated). |
+| `--package=P[,…]` | Restrict to exact workspace member **`[package].name`** values (comma-separated). Empty names are errors. |
 | `--audit-code` | Run the detector on each scanned member manifest and merge results (sums file counts / alerts). |
 | `--all-targets` | Include `[dev-dependencies]` and `[build-dependencies]` in analysis (default: normal deps only). Also settable via `anoint.toml` `[settings].all_targets = true`. |
 | `--update-rules` | Fetch and print candidate blessed-derived rules for manual review. |

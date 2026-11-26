@@ -931,6 +931,51 @@ edition = "2021"
 }
 
 #[test]
+fn package_selection_rejects_blank_and_wrong_case() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let manifest = tmp.path().join("Cargo.toml");
+    std::fs::write(
+        &manifest,
+        "[package]\nname = \"MixedCase\"\nversion = \"0.1.0\"\n[lib]\npath = \"lib.rs\"\n",
+    )?;
+    std::fs::write(tmp.path().join("lib.rs"), "")?;
+    for selection in ["MixedCase", "mixedcase", " ", "MixedCase, "] {
+        let output = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"))
+            .args(["anoint", "--offline", "--manifest-path"])
+            .arg(&manifest)
+            .arg(format!("--package={selection}"))
+            .output()?;
+        assert_eq!(
+            output.status.success(),
+            selection == "MixedCase",
+            "{selection:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn unrelated_ancestor_lockfile_does_not_lock_nested_workspace() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    std::fs::write(tmp.path().join("Cargo.lock"), "# unrelated lockfile")?;
+    let nested = tmp.path().join("nested");
+    std::fs::create_dir(&nested)?;
+    let manifest = nested.join("Cargo.toml");
+    std::fs::write(
+        &manifest,
+        "[package]\nname = \"nested\"\nversion = \"0.1.0\"\n[lib]\npath = \"lib.rs\"\n[workspace]\n",
+    )?;
+    std::fs::write(nested.join("lib.rs"), "")?;
+    Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"))
+        .args(["anoint", "--offline", "--manifest-path"])
+        .arg(&manifest)
+        .assert()
+        .success();
+    Ok(())
+}
+
+#[test]
 fn test_explicit_policy_flag_suppresses_suggestion() {
     use std::fs;
     use tempfile::TempDir;

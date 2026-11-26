@@ -67,11 +67,11 @@ pub struct AnointOpts {
     #[arg(long)]
     pub fail_on_overlap: bool,
 
-    /// Analyze every workspace member’s `Cargo.toml` (one `cargo metadata` call).
+    /// Analyze every workspace member using one dependency resolution.
     #[arg(long)]
     pub workspace: bool,
 
-    /// Only analyze these workspace member package names (comma-separated). Implies member selection; combine with `--workspace` to avoid ambiguity on some layouts.
+    /// Only analyze these exact workspace member package names (comma-separated). Implies member selection; combine with `--workspace` to avoid ambiguity on some layouts.
     #[arg(long, value_delimiter = ',')]
     pub package: Vec<String>,
     /// Include dev-dependencies and build-dependencies in analysis.

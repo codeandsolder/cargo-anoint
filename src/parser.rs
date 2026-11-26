@@ -1,11 +1,11 @@
 //! Parser layer — extracts the full dependency tree from Cargo.toml / Cargo.lock
 //! using `cargo_metadata` for feature-aware resolution.
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use cargo_metadata::{
     CargoOpt, DependencyKind, MetadataCommand, Node, Package, PackageId, Resolve,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -95,7 +95,7 @@ pub fn get_deps(manifest_path: Option<&Path>) -> Result<Vec<ResolvedDep>> {
 ///
 /// - **Root-only**: `workspace_all_members` false and `package_filters` empty — only `[package]` at the resolved root (`resolve.root`).
 /// - **All members**: `workspace_all_members` true — every entry in `metadata.workspace_members`.
-/// - **Filtered**: non-empty `package_filters` — members whose names match case-insensitively (comma-separated CLI values become one slice).
+/// - **Filtered**: non-empty `package_filters` — members whose names match exactly (comma-separated CLI values become one slice).
 ///
 /// `all_targets` widens what counts as a "direct" dep to include `[dev-dependencies]` and
 /// `[build-dependencies]` in addition to normal `[dependencies]`.
@@ -154,7 +154,18 @@ fn fetch_metadata_and_snapshots(
         cmd.features(CargoOpt::SomeFeatures(resolution.features.clone()));
     }
     let mut args = Vec::new();
-    if lockfile_path(manifest_path).is_file() {
+    // Only the actual workspace lockfile matters. An unrelated ancestor
+    // package can have a Cargo.lock without owning this package.
+    let layout = metadata_command(manifest_path)
+        .no_deps()
+        .exec()
+        .context("discover Cargo workspace root")?;
+    if layout
+        .workspace_root
+        .join("Cargo.lock")
+        .as_std_path()
+        .try_exists()?
+    {
         args.push("--locked".to_owned());
     }
     if let Some(target) = &resolution.target {
@@ -215,58 +226,48 @@ fn select_packages<'a>(
             .ok_or_else(|| anyhow::anyhow!("Root package not in cargo metadata packages list"))
     };
 
-    let targets = match mode {
-        SnapshotMode::RootOnly => vec![resolve_workspace_root_pkg()?],
+    match mode {
+        SnapshotMode::RootOnly
+        | SnapshotMode::Custom {
+            workspace_all_members: false,
+            filters: [],
+        } => Ok(vec![resolve_workspace_root_pkg()?]),
         SnapshotMode::Custom {
-            workspace_all_members,
-            filters,
-        } => {
-            if workspace_all_members && filters.is_empty() {
-                workspace_packages_ordered
-            } else if !filters.is_empty() {
-                let wanted_set: HashSet<String> = filters
-                    .iter()
-                    .map(|s| s.trim().to_ascii_lowercase())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-
-                let mut matched: Vec<&Package> = workspace_packages_ordered
-                    .iter()
-                    .copied()
-                    .filter(|p| wanted_set.contains(&p.name.to_ascii_lowercase()))
-                    .collect();
-
-                matched.sort_by(|a, b| a.name.cmp(&b.name));
-
-                let mut missing = Vec::new();
-                for w in &wanted_set {
-                    if !matched
-                        .iter()
-                        .any(|p| p.name.eq_ignore_ascii_case(w.as_str()))
-                    {
-                        missing.push(w);
-                    }
-                }
-
-                if !missing.is_empty() {
-                    missing.sort_unstable();
-                    bail!(
-                        "no workspace package(s) matching {missing:?} — available: {}",
-                        workspace_packages_ordered
-                            .iter()
-                            .map(|p| p.name.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    );
-                }
-
-                matched
-            } else {
-                vec![resolve_workspace_root_pkg()?]
-            }
+            workspace_all_members: true,
+            filters: [],
+        } => Ok(workspace_packages_ordered),
+        SnapshotMode::Custom { filters, .. } => {
+            filter_workspace_members(&workspace_packages_ordered, filters)
         }
-    };
-    Ok(targets)
+    }
+}
+
+fn filter_workspace_members<'a>(
+    workspace: &[&'a Package],
+    filters: &[String],
+) -> Result<Vec<&'a Package>> {
+    let mut missing: BTreeSet<&str> = filters.iter().map(|name| name.trim()).collect();
+    anyhow::ensure!(
+        !missing.contains(""),
+        "workspace package names must not be empty"
+    );
+    let mut matched: Vec<_> = workspace
+        .iter()
+        .copied()
+        .filter(|package| missing.remove(package.name.as_str()))
+        .collect();
+    if !missing.is_empty() {
+        bail!(
+            "no workspace package(s) matching {missing:?} — available: {}",
+            workspace
+                .iter()
+                .map(|package| package.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    matched.sort_unstable_by(|left, right| left.name.cmp(&right.name));
+    Ok(matched)
 }
 
 /// Resolve flattened dependency list relative to `root_pkg_id`'s subtree.
@@ -353,22 +354,5 @@ fn metadata_command(manifest_path: Option<&Path>) -> MetadataCommand {
         cmd.manifest_path(path);
     }
 
-    if lockfile_path(manifest_path).is_file() {
-        cmd.other_options(vec!["--locked".to_string()]);
-    }
-
     cmd
-}
-
-fn lockfile_path(manifest_path: Option<&Path>) -> PathBuf {
-    let base = manifest_path
-        .and_then(Path::parent)
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let absolute = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
-    absolute
-        .ancestors()
-        .map(|p| p.join("Cargo.lock"))
-        .find(|p| p.is_file())
-        .unwrap_or_else(|| base.join("Cargo.lock"))
 }
