@@ -286,7 +286,10 @@ impl DependencyScan {
             return HashMap::new();
         }
 
-        if let Ok(client) = cargo_anoint::intel::IntelClient::new().await {
+        let cache_dir = directories::ProjectDirs::from("rs", "", "cargo-anoint")
+            .map(|dirs| dirs.cache_dir().to_path_buf())
+            .filter(|path| !path.as_os_str().is_empty());
+        if let Ok(mut client) = cargo_anoint::intel::IntelClient::new(cache_dir).await {
             println!("{}", "🌐 Fetching live intelligence...".dimmed());
             let (result, failed) = client.fetch_bulk_intel(&crate_names).await;
             if failed > 0 {

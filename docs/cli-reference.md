@@ -26,7 +26,7 @@ Invoked as `cargo anoint …` once `cargo-anoint` is on your `PATH` (`cargo inst
 | Flag | Description |
 |------|-------------|
 | `--manifest-path=PATH` | Workspace root or package `Cargo.toml` (defaults to cwd). Virtual `[workspace]` roots work with **`--workspace`**. |
-| `--offline` | Skip crates.io / GitHub / osv.dev intelligence fetches. Reviewed embedded rules still apply. Also settable via `anoint.toml` `[settings].offline`. |
+| `--offline` | Skip crates.io / osv.dev intelligence fetches. Reviewed embedded rules still apply. Also settable via `anoint.toml` `[settings].offline`. |
 | `--no-advisories` | Skip the osv.dev advisory check even when online. |
 | `--json` | Print unified JSON; cannot combine with **`--update-rules`**, **`--feedback`**, **`--summary`**. |
 | `--feedback` | Privacy-minded aggregate feedback block (**root crate only**). |

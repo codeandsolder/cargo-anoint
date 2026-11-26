@@ -1,4 +1,4 @@
-//! Live intelligence layer — fetches metadata from crates.io and GitHub
+//! Live intelligence layer — fetches metadata from crates.io
 //! to assess freshness, popularity, and maintenance status.
 //!
 //! All network operations are **non-fatal** for the CLI: failures are reported and the
@@ -8,10 +8,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::fs;
-use tokio::sync::Mutex;
 
 use anyhow::{Context, Result};
-use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
 const USER_AGENT: &str = concat!(
@@ -33,15 +31,6 @@ pub struct CrateIntel {
     pub last_updated: String,
     pub repository_url: Option<String>,
     pub description: Option<String>,
-}
-
-/// GitHub repository activity summary.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GitHubActivity {
-    pub last_push: String,
-    pub stars: u64,
-    pub is_archived: bool,
-    pub open_issues: u64,
 }
 
 /// Cache wrapper that tracks when data was fetched.
@@ -74,7 +63,7 @@ impl<T> CacheEntry<T> {
 
 /// Client for fetching live dependency intelligence.
 pub struct IntelClient {
-    last_crates_io_request: Mutex<Option<Instant>>,
+    last_crates_io_request: Option<Instant>,
     http: wreq::Client,
     cache_dir: Option<PathBuf>,
 }
@@ -84,16 +73,12 @@ impl IntelClient {
     ///
     /// # Errors
     /// Returns an error if the HTTP client cannot be constructed.
-    pub async fn new() -> Result<Self> {
+    pub async fn new(mut cache_dir: Option<PathBuf>) -> Result<Self> {
         let http = wreq::Client::builder()
             .user_agent(USER_AGENT)
             .timeout(Duration::from_secs(10))
             .build()
             .context("failed to create HTTP client")?;
-
-        let mut cache_dir = ProjectDirs::from("rs", "", "cargo-anoint")
-            .map(|dirs| dirs.cache_dir().to_path_buf())
-            .filter(|path| !path.as_os_str().is_empty());
 
         if let Some(dir) = &cache_dir
             && let Err(err) = fs::create_dir_all(dir).await
@@ -106,7 +91,7 @@ impl IntelClient {
         }
 
         Ok(Self {
-            last_crates_io_request: Mutex::new(None),
+            last_crates_io_request: None,
             http,
             cache_dir,
         })
@@ -116,7 +101,7 @@ impl IntelClient {
     ///
     /// # Errors
     /// Returns an error for invalid crate names, failed requests, or invalid registry responses.
-    pub async fn fetch_crate_intel(&self, name: &str) -> Result<CrateIntel> {
+    async fn fetch_crate_intel(&mut self, name: &str) -> Result<CrateIntel> {
         anyhow::ensure!(
             !name.is_empty()
                 && name
@@ -139,13 +124,10 @@ impl IntelClient {
         }
 
         // Cache miss or stale — fetch from crates.io
-        {
-            let mut last = self.last_crates_io_request.lock().await;
-            if let Some(previous) = *last {
-                tokio::time::sleep(Duration::from_secs(1).saturating_sub(previous.elapsed())).await;
-            }
-            *last = Some(Instant::now());
+        if let Some(previous) = self.last_crates_io_request {
+            tokio::time::sleep(Duration::from_secs(1).saturating_sub(previous.elapsed())).await;
         }
+        self.last_crates_io_request = Some(Instant::now());
         let response = self
             .http
             .get(format!("https://crates.io/api/v1/crates/{name}"))
@@ -180,36 +162,10 @@ impl IntelClient {
         Ok(intel)
     }
 
-    /// Fetch GitHub activity for a repository URL.
-    /// Returns None if the URL is not a GitHub URL or if the fetch fails.
-    pub async fn fetch_github_activity(&self, repo_url: &str) -> Option<GitHubActivity> {
-        let (owner, repo) = parse_github_url(repo_url)?;
-
-        let url = format!("https://api.github.com/repos/{owner}/{repo}");
-        let repo_info = self
-            .http
-            .get(url)
-            .send()
-            .await
-            .ok()?
-            .error_for_status()
-            .ok()?
-            .json::<GitHubRepoResponse>()
-            .await
-            .ok()?;
-
-        Some(GitHubActivity {
-            last_push: repo_info.pushed_at.unwrap_or_else(|| "unknown".into()),
-            stars: repo_info.stargazers_count.unwrap_or(0),
-            is_archived: repo_info.archived.unwrap_or(false),
-            open_issues: repo_info.open_issues_count.unwrap_or(0),
-        })
-    }
-
     /// Fetch intel for all unique crate names, returning what we can get.
     /// Return the number of unique requests that failed alongside successful results.
     pub async fn fetch_bulk_intel(
-        &self,
+        &mut self,
         crate_names: &[&str],
     ) -> (HashMap<String, CrateIntel>, usize) {
         let mut failed = 0;
@@ -245,87 +201,11 @@ struct RegistryCrate {
     description: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct GitHubRepoResponse {
-    pushed_at: Option<String>,
-    stargazers_count: Option<u64>,
-    archived: Option<bool>,
-    open_issues_count: Option<u64>,
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────
-
-/// Parse a GitHub URL into (owner, repo).
-/// Supports: <https://github.com/owner/repo>, <https://github.com/owner/repo.git>,
-/// <https://github.com/owner/repo/tree/main>, etc.
-#[must_use = "Returns the owner and repository parsed from the URL"]
-pub fn parse_github_url(url: &str) -> Option<(String, String)> {
-    let url = url.trim().trim_end_matches('/');
-
-    let after_github = url
-        .strip_prefix("https://github.com/")
-        .or_else(|| url.strip_prefix("http://github.com/"))?;
-    let mut parts = after_github.split('/');
-    let owner = parts.next()?;
-    let repo = parts.next()?.trim_end_matches(".git");
-    let valid = |part: &str| {
-        !part.is_empty()
-            && part != "."
-            && part != ".."
-            && part
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-    };
-    if !valid(owner) || !valid(repo) {
-        return None;
-    }
-
-    Some((owner.to_owned(), repo.to_owned()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
-
-    #[test]
-    fn test_parse_github_url_basic() {
-        let result = parse_github_url("https://github.com/serde-rs/serde");
-        assert_eq!(result, Some(("serde-rs".into(), "serde".into())));
-    }
-
-    #[test]
-    fn test_parse_github_url_with_git_suffix() {
-        let result = parse_github_url("https://github.com/tokio-rs/tokio.git");
-        assert_eq!(result, Some(("tokio-rs".into(), "tokio".into())));
-    }
-
-    #[test]
-    fn test_parse_github_url_with_path() {
-        let result = parse_github_url("https://github.com/dtolnay/anyhow/tree/main");
-        assert_eq!(result, Some(("dtolnay".into(), "anyhow".into())));
-    }
-
-    #[test]
-    fn test_parse_github_url_trailing_slash() {
-        let result = parse_github_url("https://github.com/clap-rs/clap/");
-        assert_eq!(result, Some(("clap-rs".into(), "clap".into())));
-    }
-
-    #[test]
-    fn test_parse_github_url_not_github() {
-        assert!(parse_github_url("https://gitlab.com/foo/bar").is_none());
-        assert!(parse_github_url("https://notgithub.com/foo/bar").is_none());
-        assert!(parse_github_url("https://example.com/github.com/foo/bar").is_none());
-        assert!(parse_github_url("https://crates.io/crates/serde").is_none());
-    }
-
-    #[test]
-    fn test_parse_github_url_too_short() {
-        assert!(parse_github_url("https://github.com/just-user").is_none());
-        assert!(parse_github_url("https://github.com/").is_none());
-    }
 
     #[test]
     fn registry_response_matches_crates_io_wire_format() {
@@ -410,8 +290,9 @@ mod tests {
     async fn test_fetch_bulk_intel() {
         let tmp = TempDir::new().unwrap();
 
-        let mut client = IntelClient::new().await.unwrap();
-        client.cache_dir = Some(tmp.path().to_path_buf());
+        let mut client = IntelClient::new(Some(tmp.path().to_path_buf()))
+            .await
+            .unwrap();
 
         // Inject successful cache hit
         let intel = CrateIntel {
@@ -423,9 +304,11 @@ mod tests {
             repository_url: None,
             description: None,
         };
-        let entry = CacheEntry::new(intel.clone());
+        let entry = CacheEntry::new(intel);
         let json = serde_json::to_string_pretty(&entry).unwrap();
-        fs::write(tmp.path().join("test_success.json"), json).unwrap();
+        tokio::fs::write(tmp.path().join("test_success.json"), json)
+            .await
+            .unwrap();
 
         // Fetch one that succeeds and one that fails (cache miss and fake crate)
         let (results, failed) = client
@@ -443,7 +326,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_live_fetch_serde() {
-        let client = IntelClient::new().await.expect("client should init");
+        let mut client = IntelClient::new(None).await.expect("client should init");
         let intel = client
             .fetch_crate_intel("serde")
             .await
@@ -453,22 +336,6 @@ mod tests {
         println!(
             "serde: v{}, {} downloads",
             intel.latest_version, intel.downloads
-        );
-    }
-
-    /// Live GitHub test — run with `cargo test -- --ignored`
-    #[tokio::test]
-    #[ignore]
-    async fn test_live_github_serde() {
-        let client = IntelClient::new().await.expect("client should init");
-        let activity = client
-            .fetch_github_activity("https://github.com/serde-rs/serde")
-            .await
-            .expect("should get activity");
-        assert!(activity.stars > 0);
-        println!(
-            "serde: {} stars, archived={}",
-            activity.stars, activity.is_archived
         );
     }
 }

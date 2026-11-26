@@ -9,7 +9,7 @@
 | `parser` | `cargo_metadata` — resolved dependency tree, direct vs transitive, features |
 | `suggestions` | Reviewed embedded `data/suggestions.json` rules; local caches do not affect analysis. Match deps and output `Suggestion` values |
 | `policy` | Optional `anoint.toml` — ignore packages, limits, code-audit filters |
-| `intel` | Optional crates.io + GitHub metadata (cached under `~/.cache/cargo-anoint/`); skipped when `--offline` or `[settings].offline` |
+| `intel` | Optional crates.io metadata (cached under `~/.cache/cargo-anoint/`); skipped when `--offline` or `[settings].offline` |
 | `advisories` | Optional osv.dev batch advisory lookup for exact resolved direct-dependency versions; skipped when `--offline` or `--no-advisories`; non-fatal |
 | `feedback` | `--feedback` — aggregate counts + code-audit "hotspots" without listing crate names or hitting the network |
 | `output` | Human-readable reports, JSON helpers (`JsonReportUnified`), code-audit summary, advisory rendering |
@@ -34,4 +34,4 @@
 - **Trust metadata** on suggestions (`impact`, `confidence`, `migration_risk`, `evidence_source`) is rule-driven. All recommendations require manual review; dependency scans do not rewrite manifests.
 - **Code audit** discovers Cargo target paths without dependency resolution, scans selected package source trees and uses tree-sitter-rust to mask comments, literals and test-only items before running heuristic detectors. Hardcoded findings use the same syntax-tree walk, source selection and diff filtering. Code quality rules are heuristics rather than type-resolved diagnoses.
 - **`cargo anoint bs`** is read-only; findings require an explicit, semantics-preserving source change.
-- **`--feedback`** always runs suggestion analysis + full code audit for the chosen manifest but does **not** perform crates.io/GitHub/osv.dev fetches — intended for voluntary, low-leak summaries.
+- **`--feedback`** always runs suggestion analysis + full code audit for the chosen manifest but does **not** perform crates.io/osv.dev fetches — intended for voluntary, low-leak summaries.

@@ -33,7 +33,7 @@ impl ResolvedDep {
 
 /// One Cargo package in the workspace (or the resolved root crate) plus its dependency tree.
 ///
-/// Produced before suggestion analysis runs; see Phase 3 workspace design (`docs/`).
+/// Produced before suggestion analysis runs.
 #[derive(Debug, Clone)]
 pub struct PackageResult {
     pub name: String,
