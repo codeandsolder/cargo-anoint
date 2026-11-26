@@ -145,7 +145,15 @@
         "wreq-util",
         "reqsign-core",
         "reqsign-azure-storage",
-        "reqsign-google"
+        "reqsign-google",
+        "fuser",
+        "lzma-rust2",
+        "wasm_split_macros",
+        "leptos",
+        "leptos_server",
+        "server_fn",
+        "opendal-core",
+        "opendal-service-redis"
       ]
     },
     {
@@ -506,19 +514,33 @@
     },
     {
       "packages": [
+<<<<<<< HEAD
         "base64-simd"
       ],
       "preferred": "base64 0.23 or newer compatible SIMD implementation",
       "notes": "Compare vectorized source-map throughput and error semantics before migrating; do not change public format or padding behavior.",
+=======
+        "linked-hash-map"
+      ],
+      "preferred": "lru for recency-bounded caches; indexmap for insertion-ordered maps",
+      "notes": "Select based on actual ordered-map semantics. For weighted caches keep explicit weight accounting and eviction callbacks; do not replace an arbitrary linked map with a count-bounded cache.",
+>>>>>>> origin/rules/sccache-normalized-20261126
       "include_transitive": true
     },
     {
       "packages": [
+<<<<<<< HEAD
         "nix"
       ],
       "preferred": "rustix for supported syscall APIs when already present",
       "notes": "Do not force a wrapper migration when platform or syscall support differs. Use checked PID and flag conversions; preserve process-group and signal behavior.",
       "include_transitive": true
+=======
+        "chrono"
+      ],
+      "preferred": "Jiff for new date/time formatting and calendrical operations where compatible",
+      "notes": "Consolidate if Jiff is already required. Evaluate supported timestamp range, time zones, serialization formats and WASM support before migrating; not a drop-in type alias."
+>>>>>>> origin/rules/sccache-normalized-20261126
     }
   ],
   "feature_preferences": [
@@ -565,6 +587,7 @@
       "include_transitive": true
     },
     {
+<<<<<<< HEAD
       "package": "mime_guess",
       "competing_features": [
         "rev-mappings"
@@ -604,6 +627,15 @@
         }
       ],
       "notes": "Align compatible parser, encoder, printer, WAT and fuzz generator releases; independent upstream pins or distinct tool boundaries can justify a split."
+=======
+      "package": "leptos_axum",
+      "competing_features": [
+        "default"
+      ],
+      "preferred": "Disable default features when WebSocket server functions are unused; explicitly enable the required Tokio and Tower HTTP features",
+      "notes": "The default enables server_fn/axum and axum/ws, which pulls in tungstenite and tokio-tungstenite. Preserve axum-no-default HTTP server function support and actual static-file routes. Keep WebSockets when used.",
+      "include_transitive": true
+>>>>>>> origin/rules/sccache-normalized-20261126
     }
   ]
 }
