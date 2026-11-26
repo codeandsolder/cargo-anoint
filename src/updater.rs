@@ -1,5 +1,5 @@
 //! Self-updating rules — fetches the latest blessed.rs crate recommendations
-//! and converts them into cargo-bless suggestion rules.
+//! and converts them into cargo-anoint suggestion rules.
 //!
 //! blessed.rs publishes structured data at:
 //! https://raw.githubusercontent.com/nicoburns/blessed-rs/main/data/crates.json
@@ -82,7 +82,7 @@ pub fn update_rules() -> Result<Vec<Rule>> {
 
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(15))
-        .user_agent(concat!("cargo-bless/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("cargo-anoint/", env!("CARGO_PKG_VERSION")))
         .build()
         .context("failed to build HTTP client")?;
 
@@ -134,7 +134,7 @@ pub fn load_cached_rules() -> Option<Vec<Rule>> {
 
 /// Get the cache file path.
 fn get_cache_path() -> Option<PathBuf> {
-    ProjectDirs::from("rs", "", "cargo-bless")
+    ProjectDirs::from("rs", "", "cargo-anoint")
         .map(|dirs| dirs.cache_dir().join("blessed-rules.json"))
 }
 
@@ -155,7 +155,7 @@ fn strip_html(s: &str) -> String {
     result
 }
 
-/// Convert blessed.rs data into cargo-bless rules.
+/// Convert blessed.rs data into cargo-anoint rules.
 ///
 /// For each purpose with 2+ recommendations, the first is "preferred"
 /// and the rest become migration rule patterns pointing to it.
@@ -186,6 +186,7 @@ fn convert_to_rules(data: &BlessedData) -> Vec<Rule> {
                     let reason = build_reason(&purpose_clean, &alt_clean, &purpose.name);
 
                     rules.push(Rule {
+                        include_transitive: false,
                         pattern: alt.name.clone(),
                         replacement: preferred.name.clone(),
                         kind,

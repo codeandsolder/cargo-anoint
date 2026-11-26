@@ -1,13 +1,13 @@
 [package]
-name = "cargo-bless"
+name = "cargo-anoint"
+publish = false
 version = "0.4.1"
 edition = "2021"
 rust-version = "1.85"
-default-run = "cargo-bless"
+default-run = "cargo-anoint"
 description = "Modernize your Rust dependencies with blessed.rs + live intel"
 license = "MIT"
-repository = "https://github.com/Ruffian-L/cargo-bless"
-homepage = "https://github.com/Ruffian-L/cargo-bless"
+repository = "https://github.com/codeandsolder/cargo-anoint"
 readme = "README.md"
 keywords = ["cargo", "dependencies", "modernize", "blessed", "lint"]
 categories = ["development-tools::cargo-plugins"]
@@ -22,7 +22,7 @@ exclude = [
 ]
 
 [[bin]]
-name = "cargo-bless"
+name = "cargo-anoint"
 path = "src/main.rs"
 
 [[bin]]
@@ -35,9 +35,6 @@ clap = { version = "4", features = ["derive"] }
 
 # Cargo parsing
 cargo_metadata = "0.19"
-
-# crates.io API
-crates_io_api = { version = "0.12", default-features = false, features = ["rustls"] }
 
 # TOML editing (comment-preserving)
 toml_edit = { version = "0.22", features = ["serde"] }
@@ -57,9 +54,6 @@ colored = "2"
 
 # XDG-compliant cache paths
 directories = "6.0"
-
-# Async runtime
-tokio = { version = "1", features = ["full"] }
 
 # Error handling
 anyhow = "1"

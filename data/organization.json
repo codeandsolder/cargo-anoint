@@ -1,0 +1,650 @@
+{
+  "forks": [
+    {
+      "repository": "wreq-exp",
+      "packages": [
+        "wreq"
+      ]
+    },
+    {
+      "repository": "btls-fast",
+      "packages": [
+        "btls",
+        "btls-sys",
+        "tokio-btls",
+        "jsonwebtoken-btls"
+      ]
+    },
+    {
+      "repository": "zlib-rs-fast",
+      "packages": [
+        "zlib-rs",
+        "libz-rs-sys"
+      ]
+    },
+    {
+      "repository": "quiche-fast",
+      "packages": [
+        "quiche",
+        "tokio-quiche",
+        "qlog",
+        "octets",
+        "h3i",
+        "qlog-dancer"
+      ]
+    },
+    {
+      "repository": "fast-socks5-fast",
+      "packages": [
+        "fast-socks5"
+      ]
+    },
+    {
+      "repository": "hayro",
+      "packages": [
+        "hayro",
+        "hayro-interpret",
+        "hayro-syntax",
+        "hayro-write",
+        "hayro-svg",
+        "hayro-jpeg2000",
+        "hayro-jbig2",
+        "hayro-ccitt",
+        "hayro-postscript",
+        "hayro-cmap",
+        "hayro-font"
+      ]
+    },
+    {
+      "repository": "oxc",
+      "packages": [
+        "oxc",
+        "oxc_allocator",
+        "oxc_ast",
+        "oxc_ast_visit",
+        "oxc_codegen",
+        "oxc_diagnostics",
+        "oxc_estree",
+        "oxc_minifier",
+        "oxc_parser",
+        "oxc_regular_expression",
+        "oxc_semantic",
+        "oxc_span",
+        "oxc_syntax",
+        "oxc_transformer",
+        "oxc_isolated_declarations",
+        "oxc_formatter",
+        "oxc_linter",
+        "oxc_ast_macros",
+        "oxc_cfg",
+        "oxc_compat",
+        "oxc_data_structures",
+        "oxc_ecmascript",
+        "oxc_str"
+      ]
+    },
+    {
+      "repository": "step-p21-fast",
+      "packages": [
+        "step-p11",
+        "step-p11-derive",
+        "step-p21",
+        "step-p21-derive"
+      ]
+    },
+    {
+      "repository": "yarugc-rs",
+      "packages": [
+        "xilem",
+        "xilem_core",
+        "xilem_masonry",
+        "masonry",
+        "masonry_core",
+        "masonry_imaging",
+        "masonry_testing",
+        "masonry_winit",
+        "xilem_web"
+      ]
+    },
+    {
+      "repository": "planetmap",
+      "packages": [
+        "planetmap"
+      ]
+    },
+    {
+      "repository": "waffle",
+      "packages": [
+        "waffle"
+      ]
+    },
+    {
+      "repository": "ngspice-rs-fast",
+      "packages": [
+        "ngspice-rs"
+      ]
+    },
+    {
+      "repository": "zipp-fast",
+      "packages": [
+        "zipp-vm",
+        "zipp-cli",
+        "zipp-gpu",
+        "zipp-pyparse",
+        "zipp-phpparse",
+        "zipp-rsparse",
+        "zipp-numparse",
+        "zipp-regress"
+      ]
+    },
+    {
+      "repository": "cargo-patches",
+      "packages": [
+        "http2",
+        "netty",
+        "wreq-util",
+        "reqsign-core",
+        "reqsign-azure-storage",
+        "reqsign-google",
+        "fuser",
+        "lzma-rust2",
+        "wasm_split_macros",
+        "leptos",
+        "leptos_server",
+        "server_fn",
+        "opendal-core",
+        "opendal-service-redis"
+      ]
+    },
+    {
+      "repository": "rolldown-crates-redox",
+      "packages": [
+        "rolldown_redox",
+        "string_wizard"
+      ]
+    }
+  ],
+  "capabilities": [
+    {
+      "name": "HTTP client",
+      "providers": [
+        "wreq",
+        "reqwest",
+        "ureq",
+        "surf",
+        "isahc"
+      ],
+      "preferred": "wreq from https://github.com/codeandsolder/wreq-exp",
+      "notes": "Check async/runtime, target, proxy, TLS and streaming requirements; consolidate independent HTTP clients where possible."
+    },
+    {
+      "name": "HTTP server framework",
+      "providers": [
+        "axum",
+        "actix-web",
+        "rocket",
+        "warp",
+        "tiny_http",
+        "rouille",
+        "iron",
+        "poem"
+      ],
+      "preferred": "axum",
+      "notes": "Hyper is a lower-level transport, not a competing framework."
+    },
+    {
+      "name": "async runtime",
+      "providers": [
+        "tokio",
+        "async-std",
+        "smol"
+      ],
+      "preferred": "tokio",
+      "notes": "Check platform and feature combinations; runtime adapters may be intentional."
+    },
+    {
+      "name": "JSON implementation",
+      "providers": [
+        "serde_json",
+        "simd-json",
+        "sonic-rs",
+        "json"
+      ],
+      "preferred": "one implementation selected by API and performance requirements",
+      "notes": "Confirm that parsing and serialization workloads can share an implementation."
+    },
+    {
+      "name": "TLS implementation",
+      "providers": [
+        "btls",
+        "boring",
+        "openssl",
+        "rustls",
+        "native-tls"
+      ],
+      "preferred": "btls from https://github.com/codeandsolder/btls-fast for compatible native TLS use",
+      "notes": "Platform-native TLS, certificate verification, pure Rust, or different protocol requirements may justify separate providers.",
+      "complementary_pairs": [
+        [
+          "native-tls",
+          "openssl"
+        ]
+      ]
+    },
+    {
+      "name": "QUIC transport",
+      "providers": [
+        "quiche",
+        "quinn",
+        "s2n-quic"
+      ],
+      "preferred": "quiche from https://github.com/codeandsolder/quiche-fast where protocol and runtime requirements fit",
+      "notes": "Check HTTP/3, runtime, platform and transport API requirements."
+    },
+    {
+      "name": "terminal color",
+      "providers": [
+        "colored",
+        "owo-colors",
+        "ansi_term",
+        "yansi"
+      ],
+      "preferred": "one color library",
+      "notes": "Consolidate direct color formatting; type interoperability may require an adapter."
+    },
+    {
+      "name": "DEFLATE implementation",
+      "providers": [
+        "zlib-rs",
+        "miniz_oxide",
+        "libdeflater",
+        "libz-sys",
+        "libz-ng-sys"
+      ],
+      "preferred": "zlib-rs from https://github.com/codeandsolder/zlib-rs-fast where streaming and format support fit",
+      "notes": "flate2 is a frontend and is not itself an additional provider; distinguish stream and whole-buffer workloads and C ABI requirements."
+    },
+    {
+      "name": "regular expression engine",
+      "providers": [
+        "regex",
+        "fancy-regex",
+        "pcre2",
+        "regress",
+        "onig"
+      ],
+      "preferred": "one engine that meets the required syntax and performance",
+      "notes": "Lookaround, backreferences, ECMAScript compatibility and Unicode semantics may require distinct engines.",
+      "complementary_pairs": [
+        [
+          "regex",
+          "fancy-regex"
+        ]
+      ]
+    },
+    {
+      "name": "argument parser",
+      "providers": [
+        "clap",
+        "argh",
+        "pico-args",
+        "lexopt",
+        "getopts",
+        "docopt"
+      ],
+      "preferred": "one parser",
+      "notes": "Check CLI API and platform requirements; parser combinators are distinct."
+    },
+    {
+      "name": "version comparison",
+      "providers": [
+        "semver",
+        "version-compare"
+      ],
+      "preferred": "semver for SemVer inputs",
+      "notes": "Retain a different comparator only for a genuinely different version grammar."
+    },
+    {
+      "name": "Zstandard decoder",
+      "providers": [
+        "zstd",
+        "ruzstd"
+      ],
+      "preferred": "one Zstandard implementation",
+      "notes": "Pure Rust or WASM support can justify a second decoder."
+    },
+    {
+      "name": "HTTP/2 transport",
+      "providers": [
+        "h2",
+        "http2"
+      ],
+      "preferred": "one HTTP/2 implementation when transport APIs permit",
+      "notes": "Wreq and Hyper can use different transport APIs; do not blindly patch h2 to http2."
+    },
+    {
+      "name": "mount wrapper",
+      "providers": [
+        "libmount",
+        "nix",
+        "rustix"
+      ],
+      "preferred": "existing nix or rustix mount API",
+      "notes": "Nix and Rustix cover many complementary syscalls; only libmount duplication requires investigation.",
+      "complementary_pairs": [
+        [
+          "nix",
+          "rustix"
+        ]
+      ]
+    },
+    {
+      "name": "Base64 codec",
+      "providers": [
+        "base64",
+        "base64-simd",
+        "data-encoding"
+      ],
+      "preferred": "one Base64 codec; prefer modern base64 where its format and throughput meet requirements",
+      "notes": "data-encoding may be needed for other encodings; preserve URL-safe, padding and canonical decode behavior and benchmark SIMD paths.",
+      "complementary_pairs": [
+        [
+          "base64",
+          "data-encoding"
+        ],
+        [
+          "base64-simd",
+          "data-encoding"
+        ]
+      ]
+    },
+    {
+      "name": "Fx hash implementation",
+      "providers": [
+        "fxhash",
+        "rustc-hash"
+      ],
+      "preferred": "rustc-hash",
+      "notes": "fxhash is unmaintained; check deterministic hash output and iteration order when migrating."
+    }
+  ],
+  "preferences": [
+    {
+      "packages": [
+        "reqwest",
+        "ureq",
+        "surf",
+        "isahc",
+        "ureq-proto",
+        "opendal-http-transport-reqwest"
+      ],
+      "preferred": "wreq from https://github.com/codeandsolder/wreq-exp",
+      "notes": "Prefer the async Wreq client for compatible native applications. Migrate an owning dependency or use OpenDAL HttpTransport for storage; do not blindly substitute packages.",
+      "include_transitive": true
+    },
+    {
+      "packages": [
+        "boring",
+        "boring-sys",
+        "tokio-boring"
+      ],
+      "preferred": "corresponding btls, btls-sys or tokio-btls package from https://github.com/codeandsolder/btls-fast",
+      "notes": "Check BoringSSL binding and integration APIs; do not blindly substitute packages."
+    },
+    {
+      "packages": [
+        "ruststep",
+        "ruststep-derive"
+      ],
+      "preferred": "step-p21 family from https://github.com/codeandsolder/step-p21-fast",
+      "notes": "Check STEP parsing and entity API requirements."
+    },
+    {
+      "packages": [
+        "truck-modeling",
+        "truck-geometry",
+        "truck-meshalgo",
+        "truck-topology",
+        "truck-polymesh",
+        "truck-stepio"
+      ],
+      "preferred": "corresponding monstertruck crates from https://github.com/codeandsolder/monstertruck",
+      "notes": "CAD APIs have diverged; evaluate the corresponding implementation rather than assuming a drop-in replacement."
+    },
+    {
+      "packages": [
+        "rustls",
+        "native-tls",
+        "openssl",
+        "openssl-sys",
+        "tokio-rustls",
+        "hyper-rustls",
+        "tokio-native-tls",
+        "hyper-tls",
+        "rustls-platform-verifier",
+        "rustls-webpki"
+      ],
+      "preferred": "btls from https://github.com/codeandsolder/btls-fast where native BoringSSL TLS is suitable",
+      "notes": "Prefer btls-fast for compatible native TLS; check certificate validation, platform trust and pure-Rust or WASM requirements. For adapters, migrate the owning HTTP/TLS dependency, not the adapter in isolation.",
+      "include_transitive": true
+    },
+    {
+      "packages": [
+        "rouille",
+        "tiny_http"
+      ],
+      "preferred": "axum over Hyper",
+      "notes": "Use Axum routes, Tokio and bounded streaming; Hyper is the transport, not a competing framework.",
+      "include_transitive": true
+    },
+    {
+      "packages": [
+        "aws-lc-rs",
+        "aws-lc-sys",
+        "ring"
+      ],
+      "preferred": "btls-fast for compatible native cryptographic operations",
+      "notes": "Avoid compiling a second native crypto implementation when the existing BoringSSL bindings provide the required primitives. For JWT, use jsonwebtoken-btls with built-in crypto providers disabled; for TLS migrate the owning stack. Benchmark/reference and pure-Rust or platform requirements may justify alternatives.",
+      "include_transitive": true
+    },
+    {
+      "packages": [
+        "libmount"
+      ],
+      "preferred": "nix::mount or rustix::mount",
+      "notes": "Use an existing syscall wrapper and preserve overlay escaping, mount flags and byte paths.",
+      "include_transitive": true
+    },
+    {
+      "packages": [
+        "version-compare"
+      ],
+      "preferred": "semver",
+      "notes": "Use semver for version strings that follow SemVer, not arbitrary distribution version schemes.",
+      "include_transitive": true
+    },
+    {
+      "packages": [
+        "miniz_oxide",
+        "libz-sys",
+        "libz-ng-sys"
+      ],
+      "preferred": "zlib-rs-fast",
+      "notes": "Consolidate DEFLATE implementations when stream, format and ABI requirements permit; select flate2 zlib-rs rather than its default Miniz backend.",
+      "include_transitive": true
+    },
+    {
+      "packages": [
+        "h2"
+      ],
+      "preferred": "http2 from codeandsolder/cargo-patches where the Wreq transport is used",
+      "notes": "h2 and the Wreq http2 fork are independent package identities. Do not substitute the fork into Hyper blindly; retain h2 if a separate HTTP/2 transport requires it.",
+      "include_transitive": true
+    },
+    {
+      "packages": [
+        "ruzstd"
+      ],
+      "preferred": "zstd where native Zstandard is already used",
+      "notes": "If the caller only parses archive metadata, disable unused object compression. Otherwise consolidate Zstandard decoders when target support and workload permit.",
+      "include_transitive": true
+    },
+    {
+      "packages": [
+        "simple_asn1"
+      ],
+      "preferred": "disable unused jsonwebtoken use_pem feature; otherwise retain ASN.1 support",
+      "notes": "PEM parsing is unnecessary for callers using raw JWK components or DER keys. This is not a general ban on ASN.1 parsing."
+    },
+    {
+      "packages": [
+        "webpki-roots"
+      ],
+      "preferred": "Wreq webpki-roots/native-roots or an explicit btls certificate store",
+      "notes": "Keep trust root representations aligned with the selected TLS stack; webpki-roots and webpki-root-certs are different representations, not drop-in replacements.",
+      "include_transitive": true
+    },
+    {
+      "packages": [
+        "rsa"
+      ],
+      "preferred": "btls-fast RSA APIs for native consumers, including the shared Reqsign signing patch family",
+      "notes": "Avoid a separate arbitrary-precision RSA signing backend when the application already uses BoringSSL. Reqsign core, Azure and Google must migrate as one family. For standalone, pure-Rust or WASM requirements evaluate the appropriate implementation rather than automatically replacing it.",
+      "include_transitive": true
+    },
+    {
+      "packages": [
+        "base64-simd"
+      ],
+      "preferred": "base64 0.23 or newer compatible SIMD implementation",
+      "notes": "Compare vectorized source-map throughput and error semantics before migrating; do not change public format or padding behavior.",
+      "include_transitive": true
+    },
+    {
+      "packages": [
+        "nix"
+      ],
+      "preferred": "rustix for supported syscall APIs when already present",
+      "notes": "Do not force a wrapper migration when platform or syscall support differs. Use checked PID and flag conversions; preserve process-group and signal behavior.",
+      "include_transitive": true
+    },
+    {
+      "packages": [
+        "linked-hash-map"
+      ],
+      "preferred": "lru for recency-bounded caches; indexmap for insertion-ordered maps",
+      "notes": "Select based on actual ordered-map semantics. For weighted caches keep explicit weight accounting and eviction callbacks; do not replace an arbitrary linked map with a count-bounded cache.",
+      "include_transitive": true
+    },
+    {
+      "packages": [
+        "chrono"
+      ],
+      "preferred": "Jiff for new date/time formatting and calendrical operations where compatible",
+      "notes": "Consolidate if Jiff is already required. Evaluate supported timestamp range, time zones, serialization formats and WASM support before migrating; not a drop-in type alias."
+    },
+    {
+      "packages": [
+        "compression-codecs"
+      ],
+      "preferred": "enable flate2 zlib-rs backend when used for gzip/deflate",
+      "notes": "The shared compression-backend patch disables flate2 default features and enables zlib-rs. Preserve compression format behavior; other enabled flate2 consumers can still activate miniz_oxide.",
+      "include_transitive": true,
+      "satisfied_repository": "cargo-patches"
+    }
+  ],
+  "feature_preferences": [
+    {
+      "package": "flate2",
+      "preferred_feature": "zlib-rs",
+      "competing_features": [
+        "rust_backend",
+        "miniz_oxide",
+        "zlib",
+        "zlib-ng",
+        "zlib-ng-compat"
+      ],
+      "preferred": "flate2 with the zlib-rs feature and a compatible codeandsolder/zlib-rs-fast Cargo patch",
+      "notes": "Keep the flate2 frontend when its API is useful; consolidate on the preferred DEFLATE backend if target and feature support permit. Verify the resolved zlib-rs source.",
+      "include_transitive": true
+    },
+    {
+      "package": "jsonwebtoken",
+      "competing_features": [
+        "aws_lc_rs",
+        "rust_crypto"
+      ],
+      "preferred": "jsonwebtoken-btls from codeandsolder/btls-fast; disable built-in crypto backends",
+      "notes": "For compatible native builds, install the btls provider and keep jsonwebtoken validation. Avoid a second native cryptographic stack. Retain other providers only when required by target or application.",
+      "include_transitive": true
+    },
+    {
+      "package": "jsonwebtoken",
+      "competing_features": [
+        "use_pem"
+      ],
+      "preferred": "Disable use_pem if all keys already arrive as JWK components or DER",
+      "notes": "Review call sites before changing the feature; PEM callers need ASN.1 parsing. Removing unused PEM support eliminates simple_asn1 and its transitive dependencies.",
+      "include_transitive": true
+    },
+    {
+      "package": "object",
+      "competing_features": [
+        "compression"
+      ],
+      "preferred": "Disable object compression when only archive or executable metadata is required",
+      "notes": "Compressed debug sections require decompression; do not disable it for consumers that actually read them. Avoid the default Ruzstd backend when not needed.",
+      "include_transitive": true
+    },
+    {
+      "package": "mime_guess",
+      "competing_features": [
+        "rev-mappings"
+      ],
+      "preferred": "disable default reverse MIME mappings if only extension-to-MIME lookup is required",
+      "notes": "Keep the complete forward database; inspect consumers for get_mime_extensions and other reverse lookups.",
+      "include_transitive": true
+    },
+    {
+      "package": "leptos_axum",
+      "competing_features": [
+        "default"
+      ],
+      "preferred": "Disable default features when WebSocket server functions are unused; explicitly enable the required Tokio and Tower HTTP features",
+      "notes": "The default enables server_fn/axum and axum/ws, which pulls in tungstenite and tokio-tungstenite. Preserve axum-no-default HTTP server function support and actual static-file routes. Keep WebSockets when used.",
+      "include_transitive": true
+    }
+  ],
+  "version_families": [
+    {
+      "name": "wasm-tools release generation",
+      "members": [
+        {
+          "package": "wasmparser",
+          "version_component": 1
+        },
+        {
+          "package": "wasm-encoder",
+          "version_component": 1
+        },
+        {
+          "package": "wasmprinter",
+          "version_component": 1
+        },
+        {
+          "package": "wasm-smith",
+          "version_component": 1
+        },
+        {
+          "package": "wat",
+          "version_component": 1
+        },
+        {
+          "package": "wast",
+          "version_component": 0
+        }
+      ],
+      "notes": "Align compatible parser, encoder, printer, WAT and fuzz generator releases; independent upstream pins or distinct tool boundaries can justify a split."
+    }
+  ]
+}

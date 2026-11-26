@@ -1,11 +1,11 @@
-//! Policy layer — parses bless.toml for custom rules, overrides, and enforcement settings.
+//! Policy layer — parses anoint.toml for custom rules, overrides, and enforcement settings.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-/// Top-level policy configuration loaded from bless.toml.
+/// Top-level policy configuration loaded from anoint.toml.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Policy {
     /// Custom suggestion rules to add or override defaults.
@@ -31,9 +31,19 @@ pub struct Policy {
     /// Bullshit detector code-audit suppressions.
     #[serde(default)]
     pub code_audit: CodeAuditPolicy,
+    /// Reviewed exceptions for a specific package and exact overlapping provider set.
+    #[serde(default)]
+    pub allow_overlap: Vec<OverlapException>,
 }
 
-/// A custom rule from bless.toml.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OverlapException {
+    pub package: String,
+    pub providers: Vec<String>,
+    pub reason: String,
+}
+
+/// A custom rule from anoint.toml.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolicyRule {
     /// Crate name or combo pattern (e.g., "reqwest+serde_json").
@@ -81,10 +91,9 @@ pub struct PolicySettings {
     /// Whether to include dev-dependencies in analysis by default.
     #[serde(default)]
     pub all_targets: bool,
-
-    /// Maximum number of suggestions to show per run (0 = unlimited).
+    /// Gate capability overlaps independently of impact levels.
     #[serde(default)]
-    pub max_suggestions: usize,
+    pub fail_on_overlap: bool,
 
     /// Reserved confidence threshold for future machine-assisted suggestions.
     #[serde(default)]
@@ -106,33 +115,56 @@ pub struct CodeAuditPolicy {
     pub include_tests: bool,
 }
 
-/// Load policy from a bless.toml file at the given path.
+/// Load policy from a anoint.toml file at the given path.
 /// Returns None if the file does not exist or cannot be parsed.
 pub fn load_policy(path: &Path) -> Option<Policy> {
     try_load_policy(path).ok()
 }
 
-/// Load policy from a bless.toml file at the given path.
+/// Load policy from a anoint.toml file at the given path.
 /// Returns an error if the file is missing, unreadable, or invalid.
 pub fn try_load_policy(path: &Path) -> anyhow::Result<Policy> {
     let content = fs::read_to_string(path)
         .map_err(|err| anyhow::anyhow!("failed to read policy {}: {err}", path.display()))?;
     let policy: Policy = toml_edit::de::from_str(&content)
         .map_err(|err| anyhow::anyhow!("failed to parse policy {}: {err}", path.display()))?;
+    for entry in &policy.allow_overlap {
+        if entry.package.trim().is_empty()
+            || entry.reason.trim().is_empty()
+            || entry.providers.len() != 2
+            || entry.providers.iter().any(|p| p.trim().is_empty())
+            || entry
+                .providers
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                != entry.providers.len()
+        {
+            anyhow::bail!("invalid allow_overlap in {}: provide package, exactly two distinct providers, and a reason", path.display());
+        }
+    }
     Ok(policy)
 }
 
 /// Filter suggestions based on policy rules.
 /// - Removes suggestions for ignored packages.
 /// - Applies per-package suppress/pin overrides.
-/// - Caps total suggestions if max_suggestions is set.
 pub fn apply_policy(
     suggestions: Vec<crate::suggestions::Suggestion>,
     policy: &Policy,
 ) -> Vec<crate::suggestions::Suggestion> {
-    let mut filtered: Vec<_> = suggestions
+    let filtered: Vec<_> = suggestions
         .into_iter()
         .filter(|s| {
+            if s.kind == crate::suggestions::SuggestionKind::CapabilityOverlap {
+                let providers: std::collections::BTreeSet<_> =
+                    suggestion_crates(&s.current).collect();
+                return !policy.allow_overlap.iter().any(|entry| {
+                    s.package.as_deref() == Some(entry.package.as_str())
+                        && providers == entry.providers.iter().map(String::as_str).collect()
+                        && !entry.reason.trim().is_empty()
+                });
+            }
             // Check ignore_packages
             if suggestion_crates(&s.current)
                 .any(|name| policy.ignore_packages.iter().any(|ignored| ignored == name))
@@ -152,11 +184,6 @@ pub fn apply_policy(
             true
         })
         .collect();
-
-    // Apply max_suggestions cap
-    if policy.settings.max_suggestions > 0 {
-        filtered.truncate(policy.settings.max_suggestions);
-    }
 
     filtered
 }
@@ -226,14 +253,8 @@ suppress = true
     }
 
     #[test]
-    fn test_apply_policy_max_suggestions() {
-        let policy = Policy {
-            settings: PolicySettings {
-                max_suggestions: 2,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+    fn test_apply_policy_does_not_truncate_findings() {
+        let policy = Policy::default();
 
         let suggestions: Vec<_> = (0..5)
             .map(|i| crate::suggestions::Suggestion {
@@ -252,7 +273,7 @@ suppress = true
             .collect();
 
         let filtered = apply_policy(suggestions, &policy);
-        assert_eq!(filtered.len(), 2, "should cap at max_suggestions");
+        assert_eq!(filtered.len(), 5, "must retain all gate findings");
     }
 
     #[test]

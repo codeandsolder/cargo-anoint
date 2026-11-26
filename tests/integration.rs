@@ -1,4 +1,4 @@
-//! Integration tests for cargo-bless.
+//! Integration tests for cargo-anoint.
 //!
 //! Uses `assert_cmd` to run the binary and check stdout/exit codes.
 
@@ -7,21 +7,21 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 
-fn cargo_bless_cmd() -> Command {
+fn cargo_anoint_cmd() -> Command {
     #[allow(deprecated)]
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
-    cmd.arg("bless");
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    cmd.arg("anoint");
     cmd
 }
 
-/// Running `cargo-bless bless` in our own project should succeed and print
+/// Running `cargo-anoint bless` in our own project should succeed and print
 /// the version header plus a dependency summary.
 #[test]
 fn test_bless_reports_deps() {
-    cargo_bless_cmd()
+    cargo_anoint_cmd()
         .assert()
         .success()
-        .stdout(predicate::str::contains("cargo-bless v"))
+        .stdout(predicate::str::contains("cargo-anoint v"))
         .stdout(predicate::str::contains("Direct dependencies"))
         .stdout(predicate::str::contains("Found"));
 }
@@ -29,27 +29,27 @@ fn test_bless_reports_deps() {
 /// Running with --fix --dry-run should analyze and show fix preview.
 #[test]
 fn test_fix_dry_run() {
-    cargo_bless_cmd()
+    cargo_anoint_cmd()
         .arg("--fix")
         .arg("--dry-run")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Dry-run"));
+        .stdout(predicate::str::contains("No auto-fixable suggestions"));
 }
 
 /// Running with --help should print usage information.
 #[test]
 fn test_help_flag() {
-    cargo_bless_cmd()
+    cargo_anoint_cmd()
         .arg("--help")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Bless your dependencies"));
+        .stdout(predicate::str::contains("Anoint your dependencies"));
 }
 
 #[test]
 fn test_planned_flags_remain_hidden_from_help() {
-    cargo_bless_cmd()
+    cargo_anoint_cmd()
         .arg("--help")
         .assert()
         .success()
@@ -59,8 +59,8 @@ fn test_planned_flags_remain_hidden_from_help() {
 
 #[test]
 fn test_fail_on_unknown_level_exits_nonzero() {
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
-    cmd.arg("bless").arg("--fail-on=bogus");
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    cmd.arg("anoint").arg("--fail-on=bogus");
     cmd.assert()
         .failure()
         .stderr(predicate::str::contains("unknown --fail-on level"));
@@ -90,8 +90,8 @@ lazy_static = "1"
     fs::create_dir_all(tmp.path().join("src")).expect("create src");
     fs::write(tmp.path().join("src/main.rs"), "fn main() {}").expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
-    cmd.arg("bless")
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
         .arg("--offline")
@@ -108,7 +108,7 @@ fn test_policy_fail_on_gates_without_cli_flag() {
 
     let tmp = TempDir::new().expect("temp dir");
     let manifest = tmp.path().join("Cargo.toml");
-    let policy_path = tmp.path().join("bless.toml");
+    let policy_path = tmp.path().join("anoint.toml");
 
     fs::write(
         &manifest,
@@ -125,10 +125,10 @@ lazy_static = "1"
     fs::create_dir_all(tmp.path().join("src")).expect("create src");
     fs::write(tmp.path().join("src/main.rs"), "fn main() {}").expect("write main.rs");
 
-    fs::write(&policy_path, "fail_on = [\"high\"]\n").expect("write bless.toml");
+    fs::write(&policy_path, "fail_on = [\"high\"]\n").expect("write anoint.toml");
 
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
-    cmd.arg("bless")
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
         .arg("--policy")
@@ -142,7 +142,7 @@ lazy_static = "1"
 
 #[test]
 fn test_dry_run_without_fix_exits_nonzero() {
-    cargo_bless_cmd()
+    cargo_anoint_cmd()
         .arg("--dry-run")
         .assert()
         .failure()
@@ -151,7 +151,7 @@ fn test_dry_run_without_fix_exits_nonzero() {
 
 #[test]
 fn test_json_fix_combination_exits_nonzero() {
-    cargo_bless_cmd()
+    cargo_anoint_cmd()
         .arg("--json")
         .arg("--fix")
         .assert()
@@ -163,7 +163,7 @@ fn test_json_fix_combination_exits_nonzero() {
 
 #[test]
 fn test_json_update_rules_combination_exits_nonzero() {
-    cargo_bless_cmd()
+    cargo_anoint_cmd()
         .arg("--json")
         .arg("--update-rules")
         .assert()
@@ -175,11 +175,11 @@ fn test_json_update_rules_combination_exits_nonzero() {
 
 #[test]
 fn test_feedback_prints_block() {
-    cargo_bless_cmd()
+    cargo_anoint_cmd()
         .arg("--feedback")
         .assert()
         .success()
-        .stdout(predicate::str::contains("cargo-bless feedback block"))
+        .stdout(predicate::str::contains("cargo-anoint feedback block"))
         .stdout(predicate::str::contains("version:"))
         .stdout(predicate::str::contains("direct_deps:"))
         .stdout(predicate::str::contains("code_audit_findings:"))
@@ -188,7 +188,7 @@ fn test_feedback_prints_block() {
 
 #[test]
 fn test_feedback_with_fix_exits_nonzero() {
-    cargo_bless_cmd()
+    cargo_anoint_cmd()
         .arg("--feedback")
         .arg("--fix")
         .assert()
@@ -200,12 +200,12 @@ fn test_feedback_with_fix_exits_nonzero() {
 
 #[test]
 fn test_explicit_missing_policy_exits_nonzero() {
-    cargo_bless_cmd()
+    cargo_anoint_cmd()
         .arg("--policy")
-        .arg("missing-bless.toml")
+        .arg("missing-anoint.toml")
         .assert()
         .failure()
-        .stderr(predicate::str::contains("missing-bless.toml"));
+        .stderr(predicate::str::contains("missing-anoint.toml"));
 }
 
 #[test]
@@ -228,10 +228,10 @@ edition = "2021"
     .expect("write Cargo.toml");
     fs::create_dir_all(tmp.path().join("src")).expect("create src");
     fs::write(tmp.path().join("src/main.rs"), "fn main() {}\n").expect("write main.rs");
-    fs::write(tmp.path().join("bless.toml"), "not valid toml =").expect("write bless.toml");
+    fs::write(tmp.path().join("anoint.toml"), "not valid toml =").expect("write anoint.toml");
 
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
-    cmd.arg("bless")
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
         .arg("--offline");
@@ -243,7 +243,7 @@ edition = "2021"
 // ── Real-world project tests ────────────────────────────────────────
 
 /// End-to-end test: create a temp Rust project with known outdated deps,
-/// run cargo-bless, and verify it detects them all.
+/// run cargo-anoint, and verify it detects them all.
 #[test]
 fn test_real_project_with_outdated_deps() {
     use std::fs;
@@ -272,18 +272,18 @@ memmap = "0.7"
     fs::create_dir_all(tmp.path().join("src")).expect("create src");
     fs::write(tmp.path().join("src/main.rs"), "fn main() {}").expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
-    cmd.arg("bless")
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
         .arg("--offline"); // skip network for determinism
 
-    let output = cmd.output().expect("run cargo-bless");
+    let output = cmd.output().expect("run cargo-anoint");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(
         output.status.success(),
-        "cargo-bless should exit 0: {}",
+        "cargo-anoint should exit 0: {}",
         stdout
     );
     assert!(stdout.contains("lazy_static"), "should detect lazy_static");
@@ -336,33 +336,31 @@ serde_derive = { path = "crates/serde_derive" }
         .expect("write path crate manifest");
     }
 
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
-    cmd.arg("bless")
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
         .arg("--fix")
         .arg("--dry-run")
         .arg("--offline");
 
-    let output = cmd.output().expect("run cargo-bless");
+    let output = cmd.output().expect("run cargo-anoint");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "should exit 0: {}", stdout);
-    assert!(stdout.contains("Dry-run"), "should show dry-run header");
     assert!(
-        stdout.contains("serde_json"),
-        "should list serde_json for feature optimization"
+        stdout.contains("No auto-fixable suggestions"),
+        "unsafe automatic edits must not be offered"
+    );
+    assert!(
+        !stdout.contains("reqwest+serde_json"),
+        "JSON helpers do not replace serde_json"
     );
     assert!(
         stdout.contains("serde_derive"),
         "should list serde_derive for feature optimization"
     );
-    // serde should NOT be in the diff — it's modern
-    let diff_section: &str = stdout.split("Dry-run").nth(1).unwrap_or("");
-    assert!(
-        !diff_section.contains("- serde"),
-        "serde should not be removed"
-    );
+    assert!(!manifest.with_extension("toml.bak").exists());
 }
 
 #[test]
@@ -397,13 +395,13 @@ edition = "2021"
     )
     .expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
-    cmd.arg("bless")
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
         .arg("--offline");
 
-    let output = cmd.output().expect("run cargo-bless");
+    let output = cmd.output().expect("run cargo-anoint");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "should exit 0: {}", stdout);
@@ -444,14 +442,14 @@ edition = "2021"
     )
     .expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
-    cmd.arg("bless")
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
         .arg("--offline")
         .arg("--audit-code");
 
-    let output = cmd.output().expect("run cargo-bless");
+    let output = cmd.output().expect("run cargo-anoint");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "should exit 0: {}", stdout);
@@ -462,11 +460,11 @@ edition = "2021"
 
 #[test]
 fn test_no_audit_code_remains_accepted_as_noop() {
-    let output = cargo_bless_cmd()
+    let output = cargo_anoint_cmd()
         .arg("--offline")
         .arg("--no-audit-code")
         .output()
-        .expect("run cargo-bless");
+        .expect("run cargo-anoint");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "should exit 0: {}", stdout);
@@ -500,10 +498,10 @@ edition = "2021"
     )
     .expect("write lib.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
     cmd.arg("bs").arg("--manifest-path").arg(&manifest);
 
-    let output = cmd.output().expect("run cargo-bless bs");
+    let output = cmd.output().expect("run cargo-anoint bs");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "should exit 0: {}", stdout);
@@ -539,13 +537,13 @@ edition = "2021"
     )
     .expect("write lib.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
-    cmd.arg("bless")
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    cmd.arg("anoint")
         .arg("bs")
         .arg("--manifest-path")
         .arg(&manifest);
 
-    let output = cmd.output().expect("run cargo-bless bless bs");
+    let output = cmd.output().expect("run cargo-anoint bless bs");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "should exit 0: {}", stdout);
@@ -578,8 +576,8 @@ lazy_static = "1"
     fs::create_dir_all(tmp.path().join("src")).expect("create src");
     fs::write(tmp.path().join("src/main.rs"), "fn main() {}\n").expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
-    cmd.arg("bless")
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
         .arg("--offline")
@@ -637,8 +635,8 @@ edition = "2021"
     }
 
     let root_manifest = tmp.path().join("Cargo.toml");
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
-    cmd.arg("bless")
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&root_manifest)
         .arg("--workspace")
@@ -678,18 +676,18 @@ lazy_static = "1"
     )
     .expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
-    cmd.arg("bless")
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
         .arg("--offline")
         .arg("--json");
 
-    let output = cmd.output().expect("run cargo-bless json");
+    let output = cmd.output().expect("run cargo-anoint json");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "should exit 0: {}", stdout);
-    assert!(stdout.contains("\"cargo_bless_version\""));
+    assert!(stdout.contains("\"cargo_anoint_version\""));
     assert!(stdout.contains("\"workspace_scan\""));
     assert!(stdout.contains("\"packages\""));
     assert!(stdout.contains("\"dependency_suggestions\""));
@@ -726,19 +724,19 @@ lazy_static = "1"
     )
     .expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
-    cmd.arg("bless")
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
         .arg("--offline")
         .arg("--json")
         .arg("--audit-code");
 
-    let output = cmd.output().expect("run cargo-bless json");
+    let output = cmd.output().expect("run cargo-anoint json");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "should exit 0: {}", stdout);
-    assert!(stdout.contains("\"cargo_bless_version\""));
+    assert!(stdout.contains("\"cargo_anoint_version\""));
     assert!(stdout.contains("\"packages\""));
     assert!(stdout.contains("\"dependency_suggestions\""));
     assert!(stdout.contains("\"code_audit\""));
@@ -771,21 +769,21 @@ edition = "2021"
     )
     .expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
     cmd.arg("bs").arg("--manifest-path").arg(&manifest);
-    let output = cmd.output().expect("run cargo-bless bs");
+    let output = cmd.output().expect("run cargo-anoint bs");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "should exit 0: {}", stdout);
     assert!(stdout.contains("Showing top 5"));
 
-    let mut verbose = Command::cargo_bin("cargo-bless").expect("binary should exist");
+    let mut verbose = Command::cargo_bin("cargo-anoint").expect("binary should exist");
     verbose
         .arg("bs")
         .arg("--manifest-path")
         .arg(&manifest)
         .arg("--verbose");
-    let output = verbose.output().expect("run cargo-bless bs --verbose");
+    let output = verbose.output().expect("run cargo-anoint bs --verbose");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "should exit 0: {}", stdout);
@@ -799,7 +797,7 @@ fn test_code_audit_policy_suppresses_findings() {
 
     let tmp = TempDir::new().expect("temp dir");
     let manifest = tmp.path().join("Cargo.toml");
-    let policy = tmp.path().join("bless.toml");
+    let policy = tmp.path().join("anoint.toml");
     fs::write(
         &manifest,
         r#"[package]
@@ -817,7 +815,7 @@ edition = "2021"
 ignore_kinds = ["UnwrapAbuse"]
 "#,
     )
-    .expect("write bless.toml");
+    .expect("write anoint.toml");
     fs::create_dir_all(tmp.path().join("src")).expect("create src");
     fs::write(
         tmp.path().join("src/main.rs"),
@@ -825,13 +823,13 @@ ignore_kinds = ["UnwrapAbuse"]
     )
     .expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
     cmd.arg("bs")
         .arg("--manifest-path")
         .arg(&manifest)
         .arg("--policy")
         .arg(&policy);
-    let output = cmd.output().expect("run cargo-bless bs");
+    let output = cmd.output().expect("run cargo-anoint bs");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "should exit 0: {}", stdout);
@@ -897,12 +895,12 @@ edition = "2021"
     )
     .expect("modify main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
     cmd.arg("bs")
         .arg("--manifest-path")
         .arg(&manifest)
         .arg("--diff");
-    let output = cmd.output().expect("run cargo-bless bs --diff");
+    let output = cmd.output().expect("run cargo-anoint bs --diff");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "should exit 0: {}", stdout);
@@ -958,14 +956,14 @@ edition = "2021"
     .expect("write bravo Cargo.toml");
     fs::write(bravo.join("src/lib.rs"), "").expect("write bravo lib.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
-    cmd.arg("bless")
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(tmp.path().join("Cargo.toml"))
         .arg("--package=alpha")
         .arg("--offline");
 
-    let output = cmd.output().expect("run cargo-bless --package alpha");
+    let output = cmd.output().expect("run cargo-anoint --package alpha");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "should exit 0: {}", stdout);
@@ -983,7 +981,7 @@ fn test_explicit_policy_flag_suppresses_suggestion() {
 
     let tmp = TempDir::new().expect("temp dir");
     let manifest = tmp.path().join("Cargo.toml");
-    let policy_path = tmp.path().join("bless.toml");
+    let policy_path = tmp.path().join("anoint.toml");
 
     fs::write(
         &manifest,
@@ -1006,17 +1004,17 @@ lazy_static = "1"
         r#"ignore_packages = ["lazy_static"]
 "#,
     )
-    .expect("write bless.toml");
+    .expect("write anoint.toml");
 
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
-    cmd.arg("bless")
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
         .arg("--policy")
         .arg(&policy_path)
         .arg("--offline");
 
-    let output = cmd.output().expect("run cargo-bless --policy");
+    let output = cmd.output().expect("run cargo-anoint --policy");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(
@@ -1058,13 +1056,13 @@ edition = "2021"
     )
     .expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
     cmd.arg("bs")
         .arg("--manifest-path")
         .arg(&manifest)
         .arg("--hardcoded");
 
-    let output = cmd.output().expect("run cargo-bless bs --hardcoded");
+    let output = cmd.output().expect("run cargo-anoint bs --hardcoded");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "should exit 0: {}", stdout);
@@ -1102,13 +1100,13 @@ edition = "2021"
     )
     .expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
     cmd.arg("bs")
         .arg("--manifest-path")
         .arg(&manifest)
         .arg("--sarif");
 
-    let output = cmd.output().expect("run cargo-bless bs --sarif");
+    let output = cmd.output().expect("run cargo-anoint bs --sarif");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "should exit 0: {}", stdout);
@@ -1129,8 +1127,8 @@ edition = "2021"
     let driver_name = &sarif["runs"][0]["tool"]["driver"]["name"];
     assert_eq!(
         driver_name.as_str().unwrap_or(""),
-        "cargo-bless",
-        "driver name must be cargo-bless"
+        "cargo-anoint",
+        "driver name must be cargo-anoint"
     );
 }
 
@@ -1162,10 +1160,10 @@ edition = "2021"
     )
     .expect("write main.rs");
 
-    let policy_path = tmp.path().join("bless.toml");
-    fs::write(&policy_path, "[settings]\nmin_confidence = 0.99\n").expect("write bless.toml");
+    let policy_path = tmp.path().join("anoint.toml");
+    fs::write(&policy_path, "[settings]\nmin_confidence = 0.99\n").expect("write anoint.toml");
 
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
     cmd.arg("bs")
         .arg("--manifest-path")
         .arg(&manifest)
@@ -1174,7 +1172,7 @@ edition = "2021"
 
     let output = cmd
         .output()
-        .expect("run cargo-bless bs with min_confidence policy");
+        .expect("run cargo-anoint bs with min_confidence policy");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "should exit 0: {}", stdout);
@@ -1212,7 +1210,7 @@ edition = "2021"
     )
     .expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
     cmd.arg("bs")
         .arg("--manifest-path")
         .arg(&manifest)
@@ -1221,7 +1219,7 @@ edition = "2021"
 
     let output = cmd
         .output()
-        .expect("run cargo-bless bs --fail-on-confidence");
+        .expect("run cargo-anoint bs --fail-on-confidence");
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
@@ -1256,13 +1254,13 @@ edition = "2021"
     .expect("write Cargo.toml");
 
     // First run — should create the file
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
-    cmd.arg("bless")
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
         .arg("--init-ci");
 
-    let output = cmd.output().expect("run cargo bless --init-ci");
+    let output = cmd.output().expect("run cargo anoint --init-ci");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(
@@ -1275,10 +1273,10 @@ edition = "2021"
         .path()
         .join(".github")
         .join("workflows")
-        .join("bless.yml");
+        .join("anoint.yml");
     assert!(
         workflow_path.exists(),
-        ".github/workflows/bless.yml should be created"
+        ".github/workflows/anoint.yml should be created"
     );
 
     let contents = fs::read_to_string(&workflow_path).expect("read workflow file");
@@ -1287,8 +1285,8 @@ edition = "2021"
         "workflow should include SARIF upload step"
     );
     assert!(
-        contents.contains("--fail-on high"),
-        "workflow should include --fail-on high"
+        contents.contains("--fail-on-overlap"),
+        "workflow should include --fail-on-overlap"
     );
     assert!(
         contents.contains("rust-cache"),
@@ -1296,13 +1294,13 @@ edition = "2021"
     );
 
     // Second run — should fail because file already exists
-    let mut cmd2 = Command::cargo_bin("cargo-bless").expect("binary should exist");
-    cmd2.arg("bless")
+    let mut cmd2 = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    cmd2.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
         .arg("--init-ci");
 
-    let output2 = cmd2.output().expect("run cargo bless --init-ci again");
+    let output2 = cmd2.output().expect("run cargo anoint --init-ci again");
     assert!(
         !output2.status.success(),
         "second run should exit non-zero (file already exists)"
@@ -1317,10 +1315,12 @@ edition = "2021"
 
 #[test]
 fn test_explain_flag_shows_rule_details() {
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
-    cmd.arg("bless").arg("--explain").arg("lazy_static");
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    cmd.arg("anoint").arg("--explain").arg("lazy_static");
 
-    let output = cmd.output().expect("run cargo bless --explain lazy_static");
+    let output = cmd
+        .output()
+        .expect("run cargo anoint --explain lazy_static");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "should exit 0: {}", stdout);
@@ -1338,12 +1338,12 @@ fn test_explain_flag_shows_rule_details() {
 
 #[test]
 fn test_explain_flag_unknown_pattern_exits_nonzero() {
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
-    cmd.arg("bless")
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    cmd.arg("anoint")
         .arg("--explain")
         .arg("this_crate_does_not_exist_xyz");
 
-    let output = cmd.output().expect("run cargo bless --explain unknown");
+    let output = cmd.output().expect("run cargo anoint --explain unknown");
     assert!(
         !output.status.success(),
         "unknown pattern should exit non-zero"
@@ -1377,13 +1377,13 @@ edition = "2021"
     )
     .expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
     cmd.arg("bs")
         .arg("--manifest-path")
         .arg(&manifest)
         .arg("--fix");
 
-    let output = cmd.output().expect("run cargo bless bs --fix");
+    let output = cmd.output().expect("run cargo anoint bs --fix");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "should exit 0: {}", stdout);
@@ -1440,14 +1440,14 @@ edition = "2021"
     let original = "fn main() { let x: Option<u32> = None; let _ = x.unwrap(); }\n";
     fs::write(&src, original).expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
     cmd.arg("bs")
         .arg("--manifest-path")
         .arg(&manifest)
         .arg("--fix")
         .arg("--dry-run");
 
-    let output = cmd.output().expect("run cargo bless bs --fix --dry-run");
+    let output = cmd.output().expect("run cargo anoint bs --fix --dry-run");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "should exit 0: {}", stdout);
@@ -1497,10 +1497,10 @@ edition = "2021"
     )
     .expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
     cmd.arg("bs").arg("--manifest-path").arg(&manifest);
 
-    let output = cmd.output().expect("run cargo-bless bs");
+    let output = cmd.output().expect("run cargo-anoint bs");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "should exit 0: {}", stdout);
@@ -1538,10 +1538,10 @@ edition = "2021"
     )
     .expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
     cmd.arg("bs").arg("--manifest-path").arg(&manifest);
 
-    let output = cmd.output().expect("run cargo-bless bs");
+    let output = cmd.output().expect("run cargo-anoint bs");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "should exit 0: {}", stdout);
@@ -1554,16 +1554,16 @@ edition = "2021"
 
 #[test]
 fn test_explain_openssl_rule() {
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
-    cmd.arg("bless").arg("--explain").arg("openssl");
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    cmd.arg("anoint").arg("--explain").arg("openssl");
 
-    let output = cmd.output().expect("run cargo bless --explain openssl");
+    let output = cmd.output().expect("run cargo anoint --explain openssl");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "should exit 0: {}", stdout);
     assert!(
-        stdout.contains("rustls"),
-        "should mention rustls as replacement: {}",
+        stdout.contains("btls-fast"),
+        "should mention btls-fast as replacement: {}",
         stdout
     );
     assert!(
@@ -1597,13 +1597,13 @@ simple_logger = "4"
     fs::create_dir_all(tmp.path().join("src")).expect("create src");
     fs::write(tmp.path().join("src/main.rs"), "fn main() {}\n").expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
-    cmd.arg("bless")
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
         .arg("--offline");
 
-    let output = cmd.output().expect("run cargo-bless");
+    let output = cmd.output().expect("run cargo-anoint");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "should exit 0: {}", stdout);
@@ -1646,10 +1646,10 @@ edition = "2021"
     )
     .expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
     cmd.arg("bs").arg("--manifest-path").arg(&manifest);
 
-    let output = cmd.output().expect("run cargo-bless bs");
+    let output = cmd.output().expect("run cargo-anoint bs");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "should exit 0: {}", stdout);
@@ -1687,10 +1687,10 @@ edition = "2021"
     )
     .expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
     cmd.arg("bs").arg("--manifest-path").arg(&manifest);
 
-    let output = cmd.output().expect("run cargo-bless bs");
+    let output = cmd.output().expect("run cargo-anoint bs");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "should exit 0: {}", stdout);
@@ -1703,7 +1703,7 @@ edition = "2021"
 
 #[test]
 fn test_no_advisories_flag_accepted() {
-    cargo_bless_cmd().arg("--no-advisories").assert().success();
+    cargo_anoint_cmd().arg("--no-advisories").assert().success();
 }
 
 #[test]
@@ -1730,13 +1730,13 @@ serde = "1"
     fs::create_dir_all(tmp.path().join("src")).expect("create src");
     fs::write(tmp.path().join("src/main.rs"), "fn main() {}\n").expect("write main.rs");
 
-    let mut cmd = Command::cargo_bin("cargo-bless").expect("binary should exist");
-    cmd.arg("bless")
+    let mut cmd = Command::cargo_bin("cargo-anoint").expect("binary should exist");
+    cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
         .arg("--offline");
 
-    let output = cmd.output().expect("run cargo-bless --offline");
+    let output = cmd.output().expect("run cargo-anoint --offline");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "should exit 0: {}", stdout);
@@ -1744,5 +1744,136 @@ serde = "1"
         !stdout.contains("Security advisories"),
         "offline mode should not fetch advisories: {}",
         stdout
+    );
+}
+
+// A capability gate must operate on the selected resolution, not the union of
+// workspace packages, feature configurations, or dependency roles.
+#[test]
+fn overlap_gate_respects_feature_target_kind_and_exact_exception() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let tmp = TempDir::new().expect("temp dir");
+    let root = tmp.path();
+    fs::create_dir(root.join("src")).expect("src");
+    fs::write(root.join("src/lib.rs"), "").expect("lib");
+    fs::write(
+        root.join("Cargo.toml"),
+        r#"
+[package]
+name = "anoint-fixture"
+version = "0.1.0"
+edition = "2021"
+[workspace]
+exclude = ["wreq", "reqwest", "ureq", "hyper", "axum"]
+[features]
+second-client = ["dep:reqwest"]
+[dependencies]
+wreq = { path = "wreq" }
+hyper = { path = "hyper" }
+axum = { path = "axum" }
+[dev-dependencies]
+ureq = { path = "ureq" }
+[target.'cfg(windows)'.dependencies]
+reqwest = { path = "reqwest", optional = true }
+"#,
+    )
+    .expect("manifest");
+    for name in ["wreq", "reqwest", "ureq", "hyper", "axum"] {
+        fs::create_dir_all(root.join(name).join("src")).expect("crate src");
+        fs::write(root.join(name).join("src/lib.rs"), "").expect("crate lib");
+        fs::write(
+            root.join(name).join("Cargo.toml"),
+            format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
+        )
+        .expect("crate manifest");
+    }
+    let run = |extra: &[&str]| {
+        let mut cmd = cargo_anoint_cmd();
+        cmd.current_dir(root)
+            .args([
+                "--offline",
+                "--workspace",
+                "--json",
+                "--all-targets",
+                "--fail-on-overlap",
+            ])
+            .args(extra);
+        cmd.output().expect("run gate")
+    };
+    assert!(
+        run(&[]).status.success(),
+        "disabled optional dependency and different dev role should not trigger"
+    );
+    let linux = run(&[
+        "--features",
+        "second-client",
+        "--target",
+        "x86_64-unknown-linux-gnu",
+    ]);
+    assert!(
+        linux.status.success(),
+        "Windows-only dependency should not trigger on Linux: {}",
+        String::from_utf8_lossy(&linux.stderr)
+    );
+    let windows = run(&[
+        "--features",
+        "second-client",
+        "--target",
+        "x86_64-pc-windows-msvc",
+    ]);
+    assert!(
+        !windows.status.success(),
+        "two active HTTP clients must trigger"
+    );
+    let report: serde_json::Value = serde_json::from_slice(&windows.stdout).expect("JSON output");
+    let findings = report["packages"][0]["dependency_suggestions"]
+        .as_array()
+        .expect("findings");
+    assert!(findings
+        .iter()
+        .any(|f| f["kind"] == "CapabilityOverlap" && f["current"] == "wreq+reqwest"));
+    fs::write(
+        root.join("anoint.toml"),
+        r#"
+[[allow_overlap]]
+package = "anoint-fixture"
+providers = ["reqwest", "wreq"]
+reason = "Independent compatibility fixture for a deliberate comparison"
+"#,
+    )
+    .expect("exception");
+    assert!(
+        run(&[
+            "--features",
+            "second-client",
+            "--target",
+            "x86_64-pc-windows-msvc"
+        ])
+        .status
+        .success(),
+        "exact reviewed exception"
+    );
+    fs::write(
+        root.join("anoint.toml"),
+        r#"
+[[allow_overlap]]
+package = "some-other-package"
+providers = ["reqwest", "wreq"]
+reason = "Not this package"
+"#,
+    )
+    .expect("unrelated exception");
+    assert!(
+        !run(&[
+            "--features",
+            "second-client",
+            "--target",
+            "x86_64-pc-windows-msvc"
+        ])
+        .status
+        .success(),
+        "exception must not apply to unrelated packages"
     );
 }
