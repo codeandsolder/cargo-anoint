@@ -4,7 +4,7 @@
 //! All network operations are **non-fatal**: failures are logged and the
 //! tool continues with whatever data it has.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -157,20 +157,15 @@ impl IntelClient {
             .await
             .context("failed to decode crates.io response")?;
 
-        let crate_data = &response.crate_data;
-        let latest_version = response
-            .versions
-            .first()
-            .map_or_else(|| crate_data.max_version.clone(), |v| v.num.clone());
-
+        let crate_data = response.crate_data;
         let intel = CrateIntel {
             name: name.to_string(),
-            latest_version,
+            latest_version: crate_data.max_version,
             downloads: crate_data.downloads,
             recent_downloads: crate_data.recent_downloads,
-            last_updated: crate_data.updated_at.clone(),
-            repository_url: crate_data.repository.clone(),
-            description: crate_data.description.clone(),
+            last_updated: crate_data.updated_at,
+            repository_url: crate_data.repository,
+            description: crate_data.description,
         };
 
         // Write to cache (best-effort)
@@ -214,7 +209,11 @@ impl IntelClient {
     /// Failures for individual crates are silently skipped.
     pub async fn fetch_bulk_intel(&self, crate_names: &[&str]) -> HashMap<String, CrateIntel> {
         let mut intel = HashMap::new();
-        for name in crate_names {
+        let mut seen = HashSet::new();
+        for name in crate_names.iter().map(|name| name.trim()) {
+            if !seen.insert(name) {
+                continue;
+            }
             if let Ok(info) = self.fetch_crate_intel(name).await {
                 intel.insert(name.to_string(), info);
             } else {
@@ -229,8 +228,6 @@ impl IntelClient {
 struct RegistryResponse {
     #[serde(rename = "crate")]
     crate_data: RegistryCrate,
-    #[serde(default)]
-    versions: Vec<RegistryVersion>,
 }
 
 #[derive(Deserialize)]
@@ -241,11 +238,6 @@ struct RegistryCrate {
     updated_at: String,
     repository: Option<String>,
     description: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct RegistryVersion {
-    num: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -265,25 +257,25 @@ struct GitHubRepoResponse {
 pub fn parse_github_url(url: &str) -> Option<(String, String)> {
     let url = url.trim().trim_end_matches('/');
 
-    // Find the github.com part
-    let after_github = {
-        let pos = url.find("github.com/")?;
-        &url[pos + "github.com/".len()..]
+    let after_github = url
+        .strip_prefix("https://github.com/")
+        .or_else(|| url.strip_prefix("http://github.com/"))?;
+    let mut parts = after_github.split('/');
+    let owner = parts.next()?;
+    let repo = parts.next()?.trim_end_matches(".git");
+    let valid = |part: &str| {
+        !part.is_empty()
+            && part != "."
+            && part != ".."
+            && part
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
     };
-
-    let parts: Vec<&str> = after_github.splitn(3, '/').collect();
-    if parts.len() < 2 {
+    if !valid(owner) || !valid(repo) {
         return None;
     }
 
-    let owner = parts[0].to_string();
-    let repo = parts[1].trim_end_matches(".git").to_string();
-
-    if owner.is_empty() || repo.is_empty() {
-        return None;
-    }
-
-    Some((owner, repo))
+    Some((owner.to_owned(), repo.to_owned()))
 }
 
 #[cfg(test)]
@@ -318,6 +310,8 @@ mod tests {
     #[test]
     fn test_parse_github_url_not_github() {
         assert!(parse_github_url("https://gitlab.com/foo/bar").is_none());
+        assert!(parse_github_url("https://notgithub.com/foo/bar").is_none());
+        assert!(parse_github_url("https://example.com/github.com/foo/bar").is_none());
         assert!(parse_github_url("https://crates.io/crates/serde").is_none());
     }
 
@@ -332,7 +326,7 @@ mod tests {
         let response: RegistryResponse = serde_json::from_str(r#"{"crate":{"max_version":"1.2.3","downloads":42,"recent_downloads":null,"updated_at":"2026-11-01T12:00:00Z","repository":"https://github.com/example/example","description":null},"versions":[{"num":"1.2.3","yanked":false}]}"#).unwrap();
         assert_eq!(response.crate_data.downloads, 42);
         assert_eq!(response.crate_data.updated_at, "2026-11-01T12:00:00Z");
-        assert_eq!(response.versions[0].num, response.crate_data.max_version);
+        assert_eq!(response.crate_data.max_version, "1.2.3");
         assert_eq!(response.crate_data.recent_downloads, None);
     }
 

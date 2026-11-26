@@ -26,7 +26,7 @@ Invoked as `cargo anoint …` once `cargo-anoint` is on your `PATH` (`cargo inst
 | Flag | Description |
 |------|-------------|
 | `--manifest-path=PATH` | Workspace root or package `Cargo.toml` (defaults to cwd). Virtual `[workspace]` roots work with **`--workspace`**. |
-| `--offline` | Skip crates.io / GitHub / osv.dev intelligence fetches. Rules + caches still apply. Also settable via `anoint.toml` `[settings].offline`. |
+| `--offline` | Skip crates.io / GitHub / osv.dev intelligence fetches. Reviewed embedded rules still apply. Also settable via `anoint.toml` `[settings].offline`. |
 | `--no-advisories` | Skip the osv.dev advisory check even when online. |
 | `--json` | Print unified JSON; cannot combine with **`--update-rules`**, **`--feedback`**, **`--summary`**. |
 | `--feedback` | Privacy-minded aggregate feedback block (**root crate only**). |
@@ -36,7 +36,7 @@ Invoked as `cargo anoint …` once `cargo-anoint` is on your `PATH` (`cargo inst
 | `--package=P[,…]` | Restrict to workspace members by **`[package].name`** (comma-separated). |
 | `--audit-code` | Run the detector on each scanned member manifest and merge results (sums file counts / alerts). |
 | `--all-targets` | Include `[dev-dependencies]` and `[build-dependencies]` in analysis (default: normal deps only). Also settable via `anoint.toml` `[settings].all_targets = true`. |
-| `--update-rules` | Refresh blessed-derived rules in the cache. |
+| `--update-rules` | Fetch and print candidate blessed-derived rules for manual review. |
 | `--init-ci` | Write a starter GitHub Actions workflow to `.github/workflows/anoint.yml` and exit. |
 | `--init-hooks` | Write `.git/hooks/pre-commit` that runs `cargo anoint bs --fail-on-confidence 0.8` before each commit, and exit. |
 | `--explain=PATTERN` | Show full details for a suggestion rule — kind, confidence, migration risk, reason, source. Fuzzy-matches on pattern name. Exits non-zero if no rule is found. |

@@ -103,7 +103,7 @@ pub struct AnointOpts {
     #[arg(long)]
     pub offline: bool,
 
-    /// Path to an anoint.toml policy file for custom rules and overrides.
+    /// Path to an anoint.toml policy file for suppressions and enforcement settings.
     #[arg(long, value_name = "PATH")]
     pub policy: Option<std::path::PathBuf>,
 

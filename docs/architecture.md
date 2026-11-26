@@ -13,7 +13,7 @@
 | `advisories` | Optional osv.dev batch advisory lookup for exact resolved direct-dependency versions; skipped when `--offline` or `--no-advisories`; non-fatal |
 | `feedback` | `--feedback` — aggregate counts + code-audit "hotspots" without listing crate names or hitting the network |
 | `output` | Human-readable reports, JSON helpers (`JsonReportUnified`), code-audit summary, advisory rendering |
-| `updater` | `cargo anoint --update-rules` — refresh rules from blessed.rs JSON |
+| `updater` | `cargo anoint --update-rules` — fetch candidate rules from blessed.rs JSON for manual review |
 | `code_audit` | Static bullshit-detector pass; scans `src/` by default; `#[test]`/`#[cfg(test)]` blocks masked via tree-sitter; opt in to `tests/`/`examples/`/`benches/` with `--include-tests` |
 | `bs_detector` | Hardcoded-value scanner (`--hardcoded`): magic numbers, API keys, IPs, URLs, credentials |
 

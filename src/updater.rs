@@ -1,22 +1,18 @@
-//! Self-updating rules — fetches the latest blessed.rs crate recommendations
+//! Candidate rule generator — fetches the latest blessed.rs crate recommendations
 //! and converts them into cargo-anoint suggestion rules.
 //!
 //! blessed.rs publishes structured data at:
 //! <https://raw.githubusercontent.com/nicoburns/blessed-rs/main/data/crates.json>
 
-use std::fs;
-use std::path::PathBuf;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
-use directories::ProjectDirs;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::suggestions::Rule;
 
 const BLESSED_URL: &str =
     "https://raw.githubusercontent.com/nicoburns/blessed-rs/main/data/crates.json";
-const CACHE_TTL_SECS: u64 = 7 * 24 * 3600; // 1 week
 
 // ── blessed.rs JSON types ────────────────────────────────────────────
 
@@ -53,29 +49,10 @@ struct Recommendation {
     notes: Option<String>,
 }
 
-/// Cached rules wrapper with timestamp.
-#[derive(Debug, Serialize, Deserialize)]
-struct CachedRules {
-    rules: Vec<Rule>,
-    fetched_at: u64,
-}
-
-impl CachedRules {
-    fn is_fresh(&self) -> bool {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        now.saturating_sub(self.fetched_at) < CACHE_TTL_SECS
-    }
-}
-
-// ── Public API ───────────────────────────────────────────────────────
-
-/// Force-fetch the latest blessed.rs data and update the cached rules.
+/// Fetch candidate recommendations for manual review.
 ///
 /// # Errors
-/// Returns an error if the upstream rules cannot be downloaded, decoded, or saved.
+/// Returns an error if the upstream rules cannot be downloaded or decoded.
 pub async fn update_rules() -> Result<Vec<Rule>> {
     println!("📡 Fetching latest blessed.rs recommendations...");
 
@@ -100,47 +77,7 @@ pub async fn update_rules() -> Result<Vec<Rule>> {
     let rules = convert_to_rules(&data);
     println!("✅ Generated {} rules from blessed.rs", rules.len());
 
-    // Cache to disk when a user-specific cache directory is available.
-    if let Some(cache_path) = get_cache_path() {
-        if let Some(parent) = cache_path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-
-        let cached = CachedRules {
-            rules: rules.clone(),
-            fetched_at: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-        };
-
-        if let Ok(json) = serde_json::to_string_pretty(&cached) {
-            let _ = fs::write(&cache_path, json);
-            println!("💾 Cached to {}", cache_path.display());
-        }
-    }
-
     Ok(rules)
-}
-
-/// Load cached blessed.rs rules if they exist and are fresh.
-#[must_use = "Returns the cached rules if they are available"]
-pub fn load_cached_rules() -> Option<Vec<Rule>> {
-    let cache_path = get_cache_path()?;
-    let contents = fs::read_to_string(&cache_path).ok()?;
-    let cached: CachedRules = serde_json::from_str(&contents).ok()?;
-
-    if cached.is_fresh() {
-        Some(cached.rules)
-    } else {
-        None
-    }
-}
-
-/// Get the cache file path.
-fn get_cache_path() -> Option<PathBuf> {
-    ProjectDirs::from("rs", "", "cargo-anoint")
-        .map(|dirs| dirs.cache_dir().join("blessed-rules.json"))
 }
 
 // ── Converter ────────────────────────────────────────────────────────

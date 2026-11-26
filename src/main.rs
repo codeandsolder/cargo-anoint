@@ -150,10 +150,8 @@ async fn run_anoint_command(opts: &cli::AnointOpts) -> Result<()> {
     let fail_levels = parse_fail_on_levels(&effective_fail_on)?;
 
     if opts.update_rules {
-        cargo_anoint::updater::update_rules().await?;
-        println!(
-            "Candidate rules fetched; review changes using the update-suggestions binary before committing."
-        );
+        let candidates = cargo_anoint::updater::update_rules().await?;
+        println!("{}", serde_json::to_string_pretty(&candidates)?);
         return Ok(());
     }
     let scan = DependencyScan::new(opts, policy.as_ref())?;

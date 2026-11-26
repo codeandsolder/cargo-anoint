@@ -21,8 +21,6 @@ pub struct BSHit {
     pub file: String,
     /// Line number (1-based).
     pub line: usize,
-    /// The raw text of the line (trimmed).
-    pub line_text: String,
     /// Category of the BS.
     pub category: BSCategory,
     /// The matched value.
@@ -189,7 +187,7 @@ fn detect_magic_numbers(
         hits.push(BSHit {
             file: path.display().to_string(),
             line: line_num,
-            line_text: line.to_string(),
+
             category: BSCategory::MagicNumber,
             value: value.to_string(),
             suggestion: "Extract to a named constant with a descriptive name".to_string(),
@@ -224,7 +222,7 @@ fn detect_hardcoded_urls(
         hits.push(BSHit {
             file: path.display().to_string(),
             line: line_num,
-            line_text: line.to_string(),
+
             category: BSCategory::HardcodedUrl,
             value: url.to_string(),
             suggestion: "Move to a config file or environment variable".to_string(),
@@ -259,7 +257,7 @@ fn detect_api_keys(
         hits.push(BSHit {
             file: path.display().to_string(),
             line: line_num,
-            line_text: line.to_string(),
+
             category: BSCategory::ApiKeyOrToken,
             value: format!("{}=***", &cap[1]),
             suggestion: "Use an environment variable or secrets manager".to_string(),
@@ -290,7 +288,7 @@ fn detect_file_paths(
         hits.push(BSHit {
             file: path.display().to_string(),
             line: line_num,
-            line_text: line.to_string(),
+
             category: BSCategory::FilePath,
             value: p.to_string(),
             suggestion: "Use a config file or environment variable for paths".to_string(),
@@ -318,7 +316,7 @@ fn detect_ip_addresses(
         hits.push(BSHit {
             file: path.display().to_string(),
             line: line_num,
-            line_text: line.to_string(),
+
             category: BSCategory::IpAddress,
             value: ip.to_string(),
             suggestion: "Use a hostname or configuration setting instead of hardcoded IP"
@@ -348,7 +346,7 @@ fn detect_credentials(
         hits.push(BSHit {
             file: path.display().to_string(),
             line: line_num,
-            line_text: line.to_string(),
+
             category: BSCategory::HardcodedCredential,
             value: format!("{}=***", &cap[1]),
             suggestion:
@@ -379,7 +377,7 @@ fn detect_hardcoded_timeouts(
         hits.push(BSHit {
             file: path.display().to_string(),
             line: line_num,
-            line_text: line.to_string(),
+
             category: BSCategory::HardcodedTimeout,
             value: format!("{value} {}", cap.get(3).map_or("", |m| m.as_str())),
             suggestion: "Make timeouts configurable via environment variables or config files"
