@@ -1,7 +1,7 @@
 //! Output layer — renders the modernization report to the terminal
 //! with colored output, emojis, and actionable links.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::BuildHasher;
 use std::path::Path;
 
@@ -16,6 +16,7 @@ use crate::suggestions::{EvidenceSource, Suggestion};
 fn print_suggestion_detail<S: BuildHasher>(
     suggestion: &Suggestion,
     intel: &HashMap<String, CrateIntel, S>,
+    registry_names: &HashSet<&str>,
 ) {
     let icon = if suggestion.kind == SuggestionKind::Unmaintained {
         "⚠️"
@@ -58,7 +59,9 @@ fn print_suggestion_detail<S: BuildHasher>(
     }
 
     for crate_name in suggestion.current.split('+').map(str::trim) {
-        if let Some(info) = intel.get(crate_name) {
+        if registry_names.contains(crate_name)
+            && let Some(info) = intel.get(crate_name)
+        {
             let mut enrichment = format!("   latest: v{}", info.latest_version);
             if let Some(recent) = info.recent_downloads {
                 enrichment.push_str(", ");
@@ -71,12 +74,14 @@ fn print_suggestion_detail<S: BuildHasher>(
 }
 
 /// One workspace member’s dependency suggestions shown in plain text reports.
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 pub struct PackageSuggestionView<'a> {
     pub name: &'a str,
     pub version: &'a str,
     pub manifest_path: &'a Path,
     pub suggestions: &'a [Suggestion],
+    /// Names backed exclusively by crates.io packages in this member's resolved graph.
+    pub registry_names: HashSet<&'a str>,
 }
 
 /// Render modernization output for one or many packages (`--workspace` / `--package` use multi headers).
@@ -122,7 +127,7 @@ pub fn render_packages_modernization<S: BuildHasher>(
             );
             println!();
             for suggestion in p.suggestions {
-                print_suggestion_detail(suggestion, intel);
+                print_suggestion_detail(suggestion, intel, &p.registry_names);
             }
             println!();
         }
@@ -134,7 +139,7 @@ pub fn render_packages_modernization<S: BuildHasher>(
         );
         println!();
         for suggestion in p.suggestions {
-            print_suggestion_detail(suggestion, intel);
+            print_suggestion_detail(suggestion, intel, &p.registry_names);
         }
     }
 

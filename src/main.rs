@@ -40,16 +40,7 @@ fn unique_direct_registry_dependency_versions<'a>(
     let mut seen = std::collections::HashSet::new();
     snapshots
         .flat_map(|snapshot| snapshot.deps.iter())
-        .filter(|dependency| {
-            dependency.is_direct()
-                && matches!(
-                    dependency.source.as_deref(),
-                    Some(
-                        "registry+https://github.com/rust-lang/crates.io-index"
-                            | "sparse+https://index.crates.io/"
-                    )
-                )
-        })
+        .filter(|dependency| dependency.is_direct() && dependency.is_crates_io())
         .filter_map(|dependency| {
             let key = (dependency.name.as_str(), dependency.version.as_str());
             seen.insert(key).then_some(key)
@@ -135,6 +126,19 @@ async fn run_anoint_command(opts: &cli::AnointOpts) -> Result<()> {
 struct PackageScan {
     snapshot: cargo_anoint::parser::PackageResult,
     suggestions: Vec<cargo_anoint::suggestions::Suggestion>,
+}
+
+// A path or git dependency can have the same name as a published crate.
+fn registry_names(deps: &[cargo_anoint::parser::ResolvedDep]) -> HashSet<&str> {
+    let mut names: HashSet<_> = deps
+        .iter()
+        .filter(|dep| dep.is_crates_io())
+        .map(|dep| dep.name.as_str())
+        .collect();
+    for dep in deps.iter().filter(|dep| !dep.is_crates_io()) {
+        names.remove(dep.name.as_str());
+    }
+    names
 }
 
 struct DependencyScan {
@@ -274,13 +278,21 @@ impl DependencyScan {
         }
     }
 
-    async fn fetch_intel(&self) -> HashMap<String, cargo_anoint::intel::CrateIntel> {
+    async fn fetch_intel(
+        &self,
+        views: &[cargo_anoint::output::PackageSuggestionView<'_>],
+    ) -> HashMap<String, cargo_anoint::intel::CrateIntel> {
         if self.offline {
             return HashMap::new();
         }
-        let crate_names: Vec<&str> = self
-            .suggestions()
-            .flat_map(|s| s.current.split('+'))
+        let crate_names: Vec<&str> = views
+            .iter()
+            .flat_map(|view| {
+                view.suggestions
+                    .iter()
+                    .flat_map(|suggestion| suggestion.current.split('+').map(str::trim))
+                    .filter(|name| view.registry_names.contains(name))
+            })
             .collect();
         if crate_names.is_empty() {
             return HashMap::new();
@@ -318,7 +330,6 @@ impl DependencyScan {
         println!("🙏 cargo-anoint v{}", env!("CARGO_PKG_VERSION"));
         println!();
         print_dependency_summary(&self.snapshots().collect::<Vec<_>>());
-        let intel = self.fetch_intel().await;
         let views: Vec<cargo_anoint::output::PackageSuggestionView<'_>> = self
             .packages
             .iter()
@@ -331,10 +342,12 @@ impl DependencyScan {
                     version: snap.version.as_str(),
                     manifest_path: snap.manifest_path.as_path(),
                     suggestions: sug.as_slice(),
+                    registry_names: registry_names(&snap.deps),
                 },
             )
             .collect();
 
+        let intel = self.fetch_intel(&views).await;
         cargo_anoint::output::render_packages_modernization(&views, &intel);
 
         cargo_anoint::output::render_advisories(&self.advisory_report(opts).await);
@@ -818,4 +831,39 @@ fn reject_invalid_flag_combinations(opts: &cli::AnointOpts) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod registry_tests {
+    use super::*;
+    use cargo_anoint::parser::ResolvedDep;
+
+    fn dependency(name: &str, source: Option<&str>) -> ResolvedDep {
+        ResolvedDep {
+            name: name.into(),
+            version: "1.0.0".into(),
+            enabled_features: Vec::new(),
+            available_features: Vec::new(),
+            source: source.map(str::to_owned),
+            repository: None,
+            direct_kinds: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn live_registry_intel_excludes_ambiguous_and_non_registry_names() {
+        let source = Some("registry+https://github.com/rust-lang/crates.io-index");
+        let deps = [
+            dependency("registry-only", source),
+            dependency("ambiguous", source),
+            dependency("ambiguous", None),
+            dependency("local", None),
+            dependency("fork", Some("git+https://github.com/example/fork")),
+            dependency(
+                "custom-registry",
+                Some("registry+https://example.com/index"),
+            ),
+        ];
+        assert_eq!(registry_names(&deps), HashSet::from(["registry-only"]));
+    }
 }

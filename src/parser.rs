@@ -29,6 +29,17 @@ impl ResolvedDep {
     pub const fn is_direct(&self) -> bool {
         !self.direct_kinds.is_empty()
     }
+    /// Whether the resolved package comes from the crates.io registry.
+    #[must_use = "Registry identity determines whether crates.io metadata applies"]
+    pub fn is_crates_io(&self) -> bool {
+        matches!(
+            self.source.as_deref(),
+            Some(
+                "registry+https://github.com/rust-lang/crates.io-index"
+                    | "sparse+https://index.crates.io/"
+            )
+        )
+    }
 }
 
 /// One Cargo package in the workspace (or the resolved root crate) plus its dependency tree.
