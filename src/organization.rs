@@ -1,5 +1,5 @@
 //! Curated organization preferences and potential capability overlaps.
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Deserialize;
 
@@ -14,6 +14,8 @@ struct Policy {
     capabilities: Vec<Capability>,
     preferences: Vec<Preference>,
     feature_preferences: Vec<FeaturePreference>,
+    #[serde(default)]
+    version_families: Vec<VersionFamily>,
 }
 
 #[derive(Deserialize)]
@@ -35,6 +37,10 @@ struct Capability {
 #[derive(Deserialize)]
 struct Preference {
     packages: Vec<String>,
+    #[serde(default)]
+    include_transitive: bool,
+    #[serde(default)]
+    satisfied_repository: Option<String>,
     preferred: String,
     notes: String,
 }
@@ -42,10 +48,36 @@ struct Preference {
 #[derive(Deserialize)]
 struct FeaturePreference {
     package: String,
-    preferred_feature: String,
+    #[serde(default)]
+    preferred_feature: Option<String>,
+    #[serde(default)]
+    include_transitive: bool,
     competing_features: Vec<String>,
     preferred: String,
     notes: String,
+}
+
+#[derive(Deserialize)]
+struct VersionFamily {
+    name: String,
+    members: Vec<VersionFamilyMember>,
+    notes: String,
+}
+
+#[derive(Deserialize)]
+struct VersionFamilyMember {
+    package: String,
+    version_component: usize,
+}
+
+fn version_component(version: &str, component: usize) -> Option<u64> {
+    version
+        .split(['-', '+'])
+        .next()?
+        .split('.')
+        .nth(component)?
+        .parse()
+        .ok()
 }
 
 /// Cargo's resolved source is authoritative: repository metadata is often inherited
@@ -96,10 +128,21 @@ fn finding(
 pub fn analyze(deps: &[ResolvedDep], package: Option<&str>) -> serde_json::Result<Vec<Suggestion>> {
     let policy: Policy = serde_json::from_str(include_str!("../data/organization.json"))?;
     let direct: Vec<_> = deps.iter().filter(|dep| dep.is_direct).collect();
-    let names: BTreeSet<&str> = direct.iter().map(|dep| dep.name.as_str()).collect();
     let mut results = Vec::new();
+    append_fork_findings(&policy.forks, deps, package, &mut results);
+    append_preference_findings(&policy, deps, package, &mut results);
+    append_version_findings(&policy.version_families, deps, package, &mut results);
+    append_overlap_findings(&policy.capabilities, &direct, package, &mut results);
+    Ok(results)
+}
 
-    for fork in &policy.forks {
+fn append_fork_findings(
+    forks: &[Fork],
+    deps: &[ResolvedDep],
+    package: Option<&str>,
+    results: &mut Vec<Suggestion>,
+) {
+    for fork in forks {
         for name in &fork.packages {
             let sources: BTreeSet<_> = deps
                 .iter()
@@ -121,10 +164,28 @@ pub fn analyze(deps: &[ResolvedDep], package: Option<&str>) -> serde_json::Resul
             }
         }
     }
+}
 
+fn append_preference_findings(
+    policy: &Policy,
+    deps: &[ResolvedDep],
+    package: Option<&str>,
+    results: &mut Vec<Suggestion>,
+) {
     for preference in &policy.preferences {
         for name in &preference.packages {
-            if names.contains(name.as_str()) {
+            if deps.iter().any(|dep| {
+                &dep.name == name
+                    && (dep.is_direct || preference.include_transitive)
+                    && !preference
+                        .satisfied_repository
+                        .as_ref()
+                        .is_some_and(|repository| {
+                            dep.source
+                                .as_deref()
+                                .is_some_and(|source| preferred_source(source, repository))
+                        })
+            }) {
                 results.push(finding(
                     name.clone(),
                     preference.preferred.clone(),
@@ -137,12 +198,13 @@ pub fn analyze(deps: &[ResolvedDep], package: Option<&str>) -> serde_json::Resul
     }
 
     for preference in &policy.feature_preferences {
-        for dep in &direct {
+        for dep in deps {
             if dep.name == preference.package
-                && dep
-                    .available_features
-                    .contains(&preference.preferred_feature)
-                && !dep.enabled_features.contains(&preference.preferred_feature)
+                && (dep.is_direct || preference.include_transitive)
+                && preference
+                    .preferred_feature
+                    .as_ref()
+                    .is_none_or(|feature| dep.available_features.contains(feature))
                 && preference
                     .competing_features
                     .iter()
@@ -158,9 +220,72 @@ pub fn analyze(deps: &[ResolvedDep], package: Option<&str>) -> serde_json::Resul
             }
         }
     }
+}
 
-    append_overlap_findings(&policy.capabilities, &direct, package, &mut results);
-    Ok(results)
+fn append_version_findings(
+    families: &[VersionFamily],
+    deps: &[ResolvedDep],
+    package: Option<&str>,
+    results: &mut Vec<Suggestion>,
+) {
+    // Cargo metadata may include optional or target-specific packages. These
+    // findings describe the selected resolution, not guaranteed compiled units.
+    let mut versions = BTreeMap::<&str, BTreeSet<&str>>::new();
+    for dep in deps {
+        versions.entry(&dep.name).or_default().insert(&dep.version);
+    }
+    for (name, resolved) in &versions {
+        if resolved.len() > 1 {
+            let mut suggestion = finding(
+                (*name).to_owned(),
+                "one compatible resolved version where upstream constraints permit".into(),
+                format!(
+                    "Multiple versions in the reachable Cargo resolution: {}. Inspect inverse dependency trees, enabled features and target/build/dev roles before consolidating; do not force incompatible APIs.",
+                    resolved.iter().copied().collect::<Vec<_>>().join(", ")
+                ),
+                SuggestionKind::ModernAlternative,
+                package,
+            );
+            suggestion.impact = Impact::Low;
+            results.push(suggestion);
+        }
+    }
+    for family in families {
+        let mut generations = BTreeMap::<u64, BTreeSet<String>>::new();
+        let mut members = BTreeSet::new();
+        for member in &family.members {
+            if let Some(resolved) = versions.get(member.package.as_str()) {
+                for version in resolved {
+                    if let Some(generation) = version_component(version, member.version_component) {
+                        generations
+                            .entry(generation)
+                            .or_default()
+                            .insert(format!("{}@{version}", member.package));
+                        members.insert(member.package.as_str());
+                    }
+                }
+            }
+        }
+        if generations.len() > 1 && members.len() > 1 {
+            let details = generations
+                .values()
+                .map(|group| group.iter().cloned().collect::<Vec<_>>().join(", "))
+                .collect::<Vec<_>>()
+                .join("; ");
+            let mut suggestion = finding(
+                members.into_iter().collect::<Vec<_>>().join("+"),
+                format!("one compatible {}", family.name),
+                format!(
+                    "Resolved release generations differ: {details}. {}",
+                    family.notes
+                ),
+                SuggestionKind::ModernAlternative,
+                package,
+            );
+            suggestion.impact = Impact::Low;
+            results.push(suggestion);
+        }
+    }
 }
 
 fn append_overlap_findings(
@@ -217,6 +342,10 @@ fn append_overlap_findings(
 mod tests {
     use super::*;
 
+    fn analyze(deps: &[ResolvedDep], package: Option<&str>) -> Vec<Suggestion> {
+        super::analyze(deps, package).expect("embedded policy must decode")
+    }
+
     fn dep(name: &str, source: Option<&str>, direct: bool) -> ResolvedDep {
         ResolvedDep {
             name: name.into(),
@@ -241,24 +370,20 @@ mod tests {
             Some("git+https://github.com/codeandsolder/wreq-exp.git?rev=abc#abc"),
             true,
         );
-        assert!(analyze(&[good], None).unwrap().is_empty());
+        assert!(analyze(&[good], None).is_empty());
         let upstream = dep(
             "wreq",
             Some("git+https://github.com/0x676e67/wreq#abc"),
             true,
         );
-        assert_eq!(analyze(&[upstream], None).unwrap().len(), 1);
+        assert_eq!(analyze(&[upstream], None).len(), 1);
         let registry = dep(
             "btls",
             Some("registry+https://github.com/rust-lang/crates.io-index"),
             true,
         );
-        assert_eq!(analyze(&[registry], None).unwrap().len(), 1);
-        assert!(
-            analyze(&[dep("btls", None, true)], None)
-                .unwrap()
-                .is_empty()
-        );
+        assert_eq!(analyze(&[registry], None).len(), 1);
+        assert!(analyze(&[dep("btls", None, true)], None).is_empty());
         assert!(!preferred_source(
             "git+https://github.com/codeandsolder/wreq-exp-imposter#abc",
             "wreq-exp"
@@ -276,8 +401,7 @@ mod tests {
                 dep("ureq", None, false),
             ],
             Some("app"),
-        )
-        .unwrap();
+        );
         let combos: Vec<_> = findings
             .iter()
             .filter(|f| f.kind == SuggestionKind::CapabilityOverlap)
@@ -295,8 +419,190 @@ mod tests {
                 ],
                 None
             )
-            .unwrap()
             .is_empty()
+        );
+    }
+    #[test]
+    fn normalized_stack_detects_transitive_backends_and_adapters() {
+        let removed = [
+            "rouille",
+            "tiny_http",
+            "reqwest",
+            "ureq",
+            "ureq-proto",
+            "opendal-http-transport-reqwest",
+            "openssl",
+            "openssl-sys",
+            "native-tls",
+            "tokio-native-tls",
+            "hyper-tls",
+            "rustls",
+            "tokio-rustls",
+            "hyper-rustls",
+            "rustls-platform-verifier",
+            "rustls-webpki",
+            "aws-lc-rs",
+            "aws-lc-sys",
+            "ring",
+            "rsa",
+            "miniz_oxide",
+            "libmount",
+            "version-compare",
+            "h2",
+            "ruzstd",
+            "webpki-roots",
+        ];
+        let deps: Vec<_> = removed.iter().map(|name| dep(name, None, false)).collect();
+        let findings = analyze(&deps, Some("application"));
+        for name in removed {
+            assert!(findings.iter().any(|f| f.current == name), "missing {name}");
+        }
+        assert!(findings.iter().all(|f| !f.is_auto_fixable()));
+    }
+
+    #[test]
+    fn backend_feature_rules_detect_mixed_and_transitive_features() {
+        let mut flate = dep("flate2", None, false);
+        flate.available_features = vec!["zlib-rs".into(), "rust_backend".into()];
+        flate.enabled_features = flate.available_features.clone();
+        let mut jwt = dep("jsonwebtoken", None, false);
+        jwt.enabled_features = vec!["aws_lc_rs".into()];
+        let findings = analyze(&[flate.clone(), jwt.clone()], None);
+        for name in ["flate2", "jsonwebtoken"] {
+            assert!(
+                findings
+                    .iter()
+                    .any(|f| f.current == name && f.kind == SuggestionKind::FeatureOptimization)
+            );
+        }
+        flate.enabled_features = vec!["zlib-rs".into()];
+        jwt.enabled_features.clear();
+        assert!(analyze(&[flate, jwt], None).is_empty());
+    }
+
+    #[test]
+    fn lru_and_dashboard_preferences() {
+        let mut leptos = dep("leptos_axum", None, false);
+        leptos.enabled_features = vec!["default".into()];
+        let findings = analyze(
+            &[
+                dep("linked-hash-map", None, true),
+                dep("chrono", None, true),
+                leptos,
+            ],
+            None,
+        );
+        for name in ["linked-hash-map", "chrono", "leptos_axum"] {
+            assert!(
+                findings
+                    .iter()
+                    .any(|finding| finding.current == name && !finding.is_auto_fixable())
+            );
+        }
+    }
+
+    #[test]
+    fn unused_format_features_have_conditional_recommendations() {
+        let mut jwt = dep("jsonwebtoken", None, false);
+        jwt.enabled_features = vec!["use_pem".into()];
+        let mut object = dep("object", None, false);
+        object.enabled_features = vec!["compression".into()];
+        let findings = analyze(&[jwt, object], None);
+        assert_eq!(findings.len(), 2);
+        assert!(
+            findings
+                .iter()
+                .all(|f| f.kind == SuggestionKind::FeatureOptimization && !f.is_auto_fixable())
+        );
+    }
+
+    #[test]
+    fn standalone_removed_wrapper_preferences() {
+        for name in [
+            "libmount",
+            "version-compare",
+            "ruzstd",
+            "h2",
+            "simple_asn1",
+            "webpki-roots",
+        ] {
+            assert!(
+                analyze(&[dep(name, None, true)], None)
+                    .iter()
+                    .any(|f| f.current == name)
+            );
+        }
+        assert!(
+            analyze(
+                &[dep(
+                    "jsonwebtoken-btls",
+                    Some("git+https://github.com/codeandsolder/btls-fast.git?rev=abc#abc"),
+                    true
+                )],
+                None
+            )
+            .is_empty()
+        );
+        assert!(analyze(&[dep("http2", Some("git+https://github.com/codeandsolder/cargo-patches.git?tag=wreq-transport-v0.0.1#abc"), true)], None).is_empty());
+    }
+
+    #[test]
+    fn mount_wrappers_are_not_equivalent_to_every_syscall_binding() {
+        let findings = analyze(&[dep("nix", None, true), dep("rustix", None, true)], None);
+        assert!(
+            !findings
+                .iter()
+                .any(|f| f.kind == SuggestionKind::CapabilityOverlap)
+        );
+        let findings = analyze(&[dep("nix", None, true), dep("libmount", None, true)], None);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.kind == SuggestionKind::CapabilityOverlap)
+        );
+    }
+    #[test]
+    fn shared_patch_satisfies_source_specific_preference() {
+        let patched = dep(
+            "compression-codecs",
+            Some(
+                "git+https://github.com/codeandsolder/cargo-patches.git?branch=generated/compression-backend#abc",
+            ),
+            false,
+        );
+        let registry = dep(
+            "compression-codecs",
+            Some("registry+https://github.com/rust-lang/crates.io-index"),
+            false,
+        );
+        assert!(analyze(&[patched.clone()], None).is_empty());
+        assert!(
+            analyze(&[patched, registry], None)
+                .iter()
+                .any(|finding| finding.current == "compression-codecs")
+        );
+    }
+
+    #[test]
+    fn reports_version_splits_without_gating_the_resolution() {
+        let mut old = dep("wasmparser", None, false);
+        old.version = "0.248.0".into();
+        let mut new = old.clone();
+        new.version = "0.263.0".into();
+        let mut wat = dep("wat", None, true);
+        wat.version = "1.263.0".into();
+        let mut wast = dep("wast", None, false);
+        wast.version = "263.0.0".into();
+        assert!(analyze(&[new.clone(), wat.clone(), wast.clone()], None).is_empty());
+        let findings = analyze(&[old, new, wat, wast], None);
+        assert_eq!(findings.len(), 2);
+        assert!(findings.iter().all(|f| f.impact == Impact::Low
+            && f.kind != SuggestionKind::CapabilityOverlap
+            && !f.is_auto_fixable()));
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.current == "wasmparser" && f.reason.contains("0.248.0"))
         );
     }
 }

@@ -191,6 +191,7 @@ fn convert_to_rules(data: &BlessedData) -> Vec<Rule> {
                     let reason = build_reason(&purpose_clean, &alt_clean, &purpose.name);
 
                     rules.push(Rule {
+                        include_transitive: false,
                         pattern: alt.name.clone(),
                         replacement: preferred.name.clone(),
                         kind,

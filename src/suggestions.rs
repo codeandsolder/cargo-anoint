@@ -99,6 +99,9 @@ pub enum EvidenceSource {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Rule {
     pub pattern: String,
+    /// Inspect reachable dependencies, not only direct declarations.
+    #[serde(default)]
+    pub include_transitive: bool,
     pub replacement: String,
     pub kind: SuggestionKind,
     pub reason: String,
@@ -215,6 +218,7 @@ pub fn analyze_for_package(
         } else {
             // Single-crate rule: exact name match
             direct_names.contains(rule.pattern.as_str())
+                || (rule.include_transitive && deps.iter().any(|dep| dep.name == rule.pattern))
         };
 
         if matched {
@@ -378,6 +382,7 @@ mod tests {
         // Create a custom rule to avoid triggering the usage grep for real dependencies
         let custom_rule = Rule {
             pattern: "reqwest+some_unused_crate".into(),
+            include_transitive: false,
             replacement: "reqwest with some feature".into(),
             kind: SuggestionKind::FeatureOptimization,
             reason: "".into(),
@@ -540,5 +545,23 @@ mod tests {
             impact_for(&SuggestionKind::FeatureOptimization),
             Impact::Low
         );
+    }
+    #[test]
+    fn unmaintained_fxhash_is_reported_transitively() {
+        let dep = ResolvedDep {
+            name: "fxhash".into(),
+            version: "0.2.1".into(),
+            enabled_features: vec![],
+            available_features: vec![],
+            source: None,
+            repository: None,
+            is_direct: false,
+            direct_kinds: vec![],
+        };
+        let findings = analyze(None, &[dep], &load_rules().expect("embedded rules"))
+            .expect("organization policy");
+        assert!(findings.iter().any(|f| f.current == "fxhash"
+            && f.kind == SuggestionKind::Unmaintained
+            && f.evidence_source == EvidenceSource::RustSec));
     }
 }
