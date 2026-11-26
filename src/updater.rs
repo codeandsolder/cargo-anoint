@@ -54,8 +54,6 @@ struct Recommendation {
 /// # Errors
 /// Returns an error if the upstream rules cannot be downloaded or decoded.
 pub async fn update_rules() -> Result<Vec<Rule>> {
-    println!("📡 Fetching latest blessed.rs recommendations...");
-
     let client = wreq::Client::builder()
         .timeout(Duration::from_secs(15))
         .user_agent(concat!("cargo-anoint/", env!("CARGO_PKG_VERSION")))
@@ -74,10 +72,7 @@ pub async fn update_rules() -> Result<Vec<Rule>> {
         .await
         .context("failed to parse blessed.rs JSON")?;
 
-    let rules = convert_to_rules(&data);
-    println!("✅ Generated {} rules from blessed.rs", rules.len());
-
-    Ok(rules)
+    Ok(convert_to_rules(&data))
 }
 
 // ── Converter ────────────────────────────────────────────────────────

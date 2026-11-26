@@ -48,10 +48,6 @@ pub struct AnointOpts {
     #[arg(long)]
     pub update_rules: bool,
 
-    /// Reserved for future machine-assisted suggestions.
-    #[arg(long, hide = true)]
-    pub llm: bool,
-
     /// Path to the Cargo.toml to analyze (defaults to current directory).
     #[arg(long, value_name = "PATH")]
     pub manifest_path: Option<std::path::PathBuf>,
@@ -60,18 +56,13 @@ pub struct AnointOpts {
     #[arg(long)]
     pub audit_code: bool,
 
-    /// Skip the default bullshit detector code audit.
-    #[arg(long, hide = true)]
-    pub no_audit_code: bool,
-
     /// Output suggestions in JSON format.
     #[arg(long)]
     pub json: bool,
 
-    /// Exit non-zero when any dependency suggestion matches one of these impacts (comma-separated: low, medium, high, critical).
-    /// `critical` is treated as **high** until a separate code-audit gate exists.
-    #[arg(long, value_delimiter = ',')]
-    pub fail_on: Vec<String>,
+    /// Exit non-zero when any dependency suggestion matches an impact (low, medium, high).
+    #[arg(long, value_delimiter = ',', value_enum)]
+    pub fail_on: Vec<cargo_anoint::suggestions::Impact>,
     /// Fail only on curated potential capability overlaps (independent of --fail-on impact levels).
     #[arg(long)]
     pub fail_on_overlap: bool,

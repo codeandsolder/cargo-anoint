@@ -31,7 +31,7 @@ Invoked as `cargo anoint …` once `cargo-anoint` is on your `PATH` (`cargo inst
 | `--json` | Print unified JSON; cannot combine with **`--update-rules`**, **`--feedback`**, **`--summary`**. |
 | `--feedback` | Privacy-minded aggregate feedback block (**root crate only**). |
 | `--summary` | Short dependency summary (**no intel**). Cannot combine with **`--audit-code`**. |
-| `--fail-on=L[,…]` | Exit **non-zero** if any retained suggestion's **`impact`** is in **`{low, medium, high, critical}`**. **`critical`** is currently an alias for **high** (dependency tier only). |
+| `--fail-on=L[,…]` | Exit **non-zero** if any retained suggestion's **`impact`** is in **`{low, medium, high}`**. |
 | `--workspace` | Analyze **every** `workspace.members` entry once. |
 | `--package=P[,…]` | Restrict to workspace members by **`[package].name`** (comma-separated). |
 | `--audit-code` | Run the detector on each scanned member manifest and merge results (sums file counts / alerts). |
@@ -49,7 +49,7 @@ Top-level fields:
 
 - **`cargo_anoint_version`**: string (`env!("CARGO_PKG_VERSION")` of the binary).
 - **`workspace_scan`**: `true` when **`--workspace`** was used or multiple members were analyzed.
-- **`packages`**: array of `{ name, version, manifest_path, dependency_suggestions }` where **`dependency_suggestions`** is the list of **`Suggestion`** structs.
+- **`packages`**: array of `{ name, version, manifest_path, dependency_suggestions }` where **`dependency_suggestions`** is the list of **`Suggestion`** structs. Impact values are lowercase; optional `condition` text states what must be reviewed before applying the recommendation.
 - **`code_audit`**: `null` unless **`--audit-code`** (bless) populated the merged report, or **`cargo anoint bs --json`** with code-audit output.
 - **`security_advisories`**: object with `status` (`skipped`, `complete`, or `unavailable`). Complete reports include `checked` and `findings` with exact crates.io versions; unavailable reports include an error.
 

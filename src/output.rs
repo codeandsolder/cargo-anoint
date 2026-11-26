@@ -53,9 +53,11 @@ fn print_suggestion_detail<S: BuildHasher>(
         format!("evidence: {}", evidence_label(&suggestion.evidence_source)).dimmed()
     );
     println!("   {}", suggestion.reason.dimmed());
+    if let Some(condition) = &suggestion.condition {
+        println!("   Review condition: {condition}");
+    }
 
-    let crate_names: Vec<&str> = suggestion.current.split('+').collect();
-    for crate_name in crate_names {
+    for crate_name in suggestion.current.split('+').map(str::trim) {
         if let Some(info) = intel.get(crate_name) {
             let mut enrichment = format!("   latest: v{}", info.latest_version);
             if let Some(recent) = info.recent_downloads {
@@ -85,24 +87,6 @@ fn use_multi_headers(packages: &[PackageSuggestionView<'_>]) -> bool {
     packages
         .first()
         .is_some_and(|p| p.suggestions.iter().any(|s| s.package.is_some()))
-}
-
-/// Single-root modernization report (`manifest_path` is only useful in grouped layouts).
-pub fn render_report<S: BuildHasher>(
-    project_name: &str,
-    version: &str,
-    suggestions: &[Suggestion],
-    intel: &HashMap<String, CrateIntel, S>,
-) {
-    render_packages_modernization(
-        &[PackageSuggestionView {
-            name: project_name,
-            version,
-            manifest_path: Path::new("Cargo.toml"),
-            suggestions,
-        }],
-        intel,
-    );
 }
 
 pub fn render_packages_modernization<S: BuildHasher>(
@@ -183,7 +167,7 @@ const fn suggestion_kind_slug(kind: &SuggestionKind) -> &'static str {
 }
 
 /// Paste-friendly condensed output (`--summary`).
-pub fn render_summary(scan_stats: &[(&str, usize, usize)], suggestions: &[Suggestion]) {
+pub fn render_summary(scan_stats: &[(&str, usize, usize)], suggestions: &[&Suggestion]) {
     const MAX: usize = 14;
     let pkg_ct = scan_stats.len();
     println!(

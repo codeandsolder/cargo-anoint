@@ -33,7 +33,7 @@ fn mesh_optimizers_overlap_but_math_and_texture_layers_do_not() {
         dependency("rayon", true),
         dependency("tokio", true),
     ];
-    let findings = analyze(None, &deps, &load_rules().unwrap()).unwrap();
+    let findings = analyze(&deps, &load_rules().unwrap(), None).unwrap();
     let overlaps: Vec<_> = findings
         .iter()
         .filter(|f| f.kind == SuggestionKind::CapabilityOverlap)
@@ -49,9 +49,9 @@ fn graphics_features_and_unmaintained_shaper_are_advisory() {
     let mut winit = dependency("winit", false);
     winit.enabled_features = vec!["wayland-csd-adwaita".into()];
     let findings = analyze(
-        None,
         &[wgpu, winit, dependency("rustybuzz", false)],
         &load_rules().unwrap(),
+        None,
     )
     .unwrap();
     assert!(

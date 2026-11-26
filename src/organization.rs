@@ -9,6 +9,7 @@ use crate::suggestions::{
 };
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Policy {
     forks: Vec<Fork>,
     capabilities: Vec<Capability>,
@@ -19,12 +20,14 @@ struct Policy {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Fork {
     repository: String,
     packages: Vec<String>,
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Capability {
     name: String,
     providers: Vec<String>,
@@ -35,6 +38,7 @@ struct Capability {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Preference {
     packages: Vec<String>,
     #[serde(default)]
@@ -46,6 +50,7 @@ struct Preference {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FeaturePreference {
     package: String,
     #[serde(default)]
@@ -58,6 +63,7 @@ struct FeaturePreference {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct VersionFamily {
     name: String,
     members: Vec<VersionFamilyMember>,
@@ -65,6 +71,7 @@ struct VersionFamily {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct VersionFamilyMember {
     package: String,
     version_component: usize,
@@ -115,6 +122,7 @@ fn finding(
         current,
         recommended,
         reason,
+        condition: None,
         source: "codeandsolder dependency policy".into(),
         impact: Impact::Medium,
         confidence: Confidence::Medium,

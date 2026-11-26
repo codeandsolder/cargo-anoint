@@ -49,7 +49,7 @@ fn test_fail_on_unknown_level_exits_nonzero() {
     cmd.arg("anoint").arg("--fail-on=bogus");
     cmd.assert()
         .failure()
-        .stderr(predicate::str::contains("unknown --fail-on level"));
+        .stderr(predicate::str::contains("invalid value"));
 }
 
 #[test]
@@ -415,16 +415,10 @@ edition = "2021"
 }
 
 #[test]
-fn test_no_audit_code_remains_accepted_as_noop() {
-    let output = cargo_anoint_cmd()
-        .arg("--offline")
-        .arg("--no-audit-code")
-        .output()
-        .expect("run cargo-anoint");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    assert!(output.status.success(), "should exit 0: {}", stdout);
-    assert!(!stdout.contains("Bullshit detector code audit"));
+fn obsolete_and_unimplemented_flags_are_rejected() {
+    for flag in ["--no-audit-code", "--llm"] {
+        cargo_anoint_cmd().arg(flag).assert().failure();
+    }
 }
 
 #[test]

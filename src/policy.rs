@@ -1,6 +1,7 @@
 //! Policy layer — parses anoint.toml for suppressions and enforcement settings.
 
 use crate::code_audit::BullshitKind;
+use crate::suggestions::Impact;
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -11,13 +12,13 @@ use std::path::Path;
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct Policy {
-    /// Packages to exclude from analysis entirely.
+    /// Suppress non-overlap recommendations for these packages.
     #[serde(default)]
     pub ignore_packages: Vec<String>,
 
     /// Override the default fail-on severity thresholds.
     #[serde(default)]
-    pub fail_on: Option<Vec<String>>,
+    pub fail_on: Vec<Impact>,
 
     /// Per-package suggestion suppressions.
     #[serde(default)]
@@ -47,7 +48,7 @@ pub struct OverlapException {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct PackagePolicy {
-    /// Suppress all suggestions for this package.
+    /// Suppress non-overlap suggestions for this dependency.
     #[serde(default)]
     pub suppress: bool,
 }
@@ -83,7 +84,7 @@ pub struct CodeAuditPolicy {
     #[serde(default)]
     pub ignore_kinds: Vec<BullshitKind>,
 
-    /// Also scan tests/, examples/, and benches/ (default: false — src/ only).
+    /// Include test-only items and test, example and benchmark targets.
     #[serde(default)]
     pub include_tests: bool,
 }
@@ -193,6 +194,7 @@ suppress = true
     fn rejects_unknown_policy_fields_and_audit_kinds() {
         for input in [
             "unknown = true",
+            "fail_on = [\"critical\"]",
             "[settings]\nfail_on_overlaps = true",
             "[packages.foo]\npin_version = \"1.0\"",
             "[code_audit]\nignore_kinds = [\"UnwarpAbuse\"]",
@@ -225,6 +227,7 @@ suppress = true
             current: "lazy_static".into(),
             recommended: "std::sync::LazyLock".into(),
             reason: "built-in since 1.80".into(),
+            condition: None,
             source: "test".into(),
             impact: crate::suggestions::Impact::High,
             confidence: crate::suggestions::Confidence::High,
@@ -250,6 +253,7 @@ suppress = true
                 current: format!("dep_{}", i),
                 recommended: format!("new_dep_{}", i),
                 reason: "test".into(),
+                condition: None,
                 source: "test".into(),
                 impact: crate::suggestions::Impact::Low,
                 confidence: crate::suggestions::Confidence::Medium,
@@ -276,6 +280,7 @@ suppress = true
                 current: "rand".into(),
                 recommended: "getrandom".into(),
                 reason: "test".into(),
+                condition: None,
                 source: "test".into(),
                 impact: crate::suggestions::Impact::Low,
                 confidence: crate::suggestions::Confidence::Medium,
@@ -288,6 +293,7 @@ suppress = true
                 current: "fastrand".into(),
                 recommended: "rand".into(),
                 reason: "test".into(),
+                condition: None,
                 source: "test".into(),
                 impact: crate::suggestions::Impact::Low,
                 confidence: crate::suggestions::Confidence::Medium,

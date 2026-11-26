@@ -53,26 +53,6 @@ impl fmt::Display for ResolvedDep {
     }
 }
 
-/// Get the root project's name and version from Cargo metadata.
-///
-/// # Errors
-/// Returns an error if Cargo metadata fails or no root package can be resolved.
-pub fn get_project_info(manifest_path: Option<&Path>) -> Result<(String, String)> {
-    let cmd = metadata_command(manifest_path);
-    let metadata = cmd.exec()?;
-    let root_id = metadata
-        .resolve
-        .as_ref()
-        .and_then(|r| r.root.as_ref())
-        .ok_or_else(|| anyhow::anyhow!("No root package found"))?;
-    let root_pkg = metadata
-        .packages
-        .iter()
-        .find(|p| &p.id == root_id)
-        .ok_or_else(|| anyhow::anyhow!("Root package not in packages list"))?;
-    Ok((root_pkg.name.clone(), root_pkg.version.to_string()))
-}
-
 /// Build a lookup from package ID to the resolved Node (which carries enabled features).
 fn build_node_lookup(resolve: &Resolve) -> HashMap<&PackageId, &Node> {
     resolve.nodes.iter().map(|n| (&n.id, n)).collect()

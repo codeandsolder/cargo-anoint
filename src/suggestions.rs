@@ -13,6 +13,8 @@ pub struct Suggestion {
     pub current: String,
     pub recommended: String,
     pub reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub condition: Option<String>,
     pub source: String,
     pub impact: Impact,
     pub confidence: Confidence,
@@ -24,7 +26,7 @@ pub struct Suggestion {
 }
 
 /// The type of suggestion.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SuggestionKind {
     /// Replace with a modern alternative crate.
     ModernAlternative,
@@ -41,7 +43,8 @@ pub enum SuggestionKind {
 }
 
 /// Impact level of a suggestion.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
 pub enum Impact {
     High,
     Medium,
@@ -49,7 +52,7 @@ pub enum Impact {
 }
 
 /// Confidence level for a recommendation.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Confidence {
     High,
     Medium,
@@ -57,7 +60,7 @@ pub enum Confidence {
 }
 
 /// Estimated migration risk for applying a recommendation.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum MigrationRisk {
     High,
     Medium,
@@ -65,7 +68,7 @@ pub enum MigrationRisk {
 }
 
 /// Primary evidence behind a recommendation.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum EvidenceSource {
     BlessedRs,
     RustSec,
@@ -78,6 +81,7 @@ pub enum EvidenceSource {
 /// The embedded blessed.rs-based rule database.
 /// Each rule maps a current pattern to a recommended modern alternative.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Rule {
     pub pattern: String,
     /// Inspect reachable dependencies, not only direct declarations.
@@ -127,32 +131,13 @@ pub fn load_rules() -> serde_json::Result<Vec<Rule>> {
     serde_json::from_str(include_str!("../data/suggestions.json"))
 }
 
-use std::fs;
-/// Analyze resolved dependencies against the rule database.
-///
-/// Matching strategies:
-/// - **Single-crate** rules (pattern has no `+`): fire if a direct dep has that name.
-/// - **Combo** rules (pattern contains `+`): fire if ALL named crates are present
-///   as direct deps.
-use std::path::Path;
-
-///
+/// Analyze resolved dependencies against the reviewed rules and organization catalog.
+/// Single and combo patterns match exact package names. Transitive matching is
+/// opt-in per rule. Conditions are human-review requirements, not executable
+/// predicates or claims about source usage.
 /// # Errors
 /// Returns an error if the embedded organization policy cannot be decoded.
 pub fn analyze(
-    manifest_path: Option<&Path>,
-    deps: &[ResolvedDep],
-    rules: &[Rule],
-) -> serde_json::Result<Vec<Suggestion>> {
-    analyze_for_package(manifest_path, deps, rules, None)
-}
-
-/// Like [`analyze`], but tags each suggestion with `package` for workspace output.
-///
-/// # Errors
-/// Returns an error if the embedded organization policy cannot be decoded.
-pub fn analyze_for_package(
-    manifest_path: Option<&Path>,
     deps: &[ResolvedDep],
     rules: &[Rule],
     package_label: Option<&str>,
@@ -163,50 +148,30 @@ pub fn analyze_for_package(
         .map(|d| d.name.as_str())
         .collect();
 
+    let reachable_names: HashSet<_> = deps.iter().map(|dep| dep.name.as_str()).collect();
     let mut suggestions = Vec::new();
-
     for rule in rules {
-        let matched = if rule.pattern.contains('+') {
-            // Combo rule: all named crates must be present
-            let all_present = rule
-                .pattern
-                .split('+')
-                .all(|name| direct_names.contains(name.trim()));
-
-            if all_present {
-                // For FeatureOptimization combo rules (like `reqwest+serde_json`),
-                // check if the second crate is actually used directly in the codebase.
-                // If it is, we shouldn't recommend dropping it.
-                if rule.kind == SuggestionKind::FeatureOptimization {
-                    let parts: Vec<&str> = rule.pattern.split('+').collect();
-                    if parts.len() == 2 {
-                        let extra_crate = parts[1].trim();
-                        if is_crate_used_in_source(manifest_path, extra_crate) {
-                            continue;
-                        }
-                    }
-                }
-                true
-            } else {
-                false
-            }
+        let names = if rule.include_transitive {
+            &reachable_names
         } else {
-            // Single-crate rule: exact name match
-            direct_names.contains(rule.pattern.as_str())
-                || (rule.include_transitive && deps.iter().any(|dep| dep.name == rule.pattern))
+            &direct_names
         };
-
+        let matched = rule
+            .pattern
+            .split('+')
+            .all(|name| names.contains(name.trim()));
         if matched {
             suggestions.push(Suggestion {
-                kind: rule.kind.clone(),
+                kind: rule.kind,
                 current: rule.pattern.clone(),
                 recommended: rule.replacement.clone(),
                 reason: rule.reason.clone(),
+                condition: rule.condition.clone(),
                 source: rule.source.clone(),
                 impact: impact_for(&rule.kind),
-                confidence: rule.confidence.clone(),
-                migration_risk: rule.migration_risk.clone(),
-                evidence_source: rule.evidence_source.clone(),
+                confidence: rule.confidence,
+                migration_risk: rule.migration_risk,
+                evidence_source: rule.evidence_source,
                 package: package_label.map(String::from),
             });
         }
@@ -214,72 +179,6 @@ pub fn analyze_for_package(
 
     suggestions.extend(crate::organization::analyze(deps, package_label)?);
     Ok(suggestions)
-}
-
-/// Recursively scans `.rs` files in the project to determine if the crate is imported or used.
-/// Checks `src`, `tests`, `benches`, and `examples` directories relative to the `manifest_path`.
-fn is_crate_used_in_source(manifest_path: Option<&Path>, crate_name: &str) -> bool {
-    let base_dir = manifest_path
-        .and_then(|p| p.parent())
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-
-    let crate_ident = crate_name.replace('-', "_");
-
-    // We check for some common usage patterns of the crate identifier
-    let patterns = [
-        format!("use {crate_ident}::"),
-        format!("use {crate_ident};"),
-        format!("{crate_ident}::"),
-        format!("{crate_ident}!"),
-    ];
-
-    let dirs_to_check = ["src", "tests", "benches", "examples"];
-
-    for dir_name in dirs_to_check {
-        let dir_path = base_dir.join(dir_name);
-        if !dir_path.exists() || !dir_path.is_dir() {
-            continue;
-        }
-
-        if scan_dir_for_patterns(&dir_path, &patterns) {
-            return true;
-        }
-    }
-
-    false
-}
-
-fn scan_dir_for_patterns(dir: &Path, patterns: &[String]) -> bool {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return true;
-    };
-
-    for entry in entries {
-        let Ok(entry) = entry else {
-            return true;
-        };
-        let path = entry.path();
-        let Ok(file_type) = entry.file_type() else {
-            return true; // Cannot establish that the dependency is unused.
-        };
-        if file_type.is_dir() {
-            if scan_dir_for_patterns(&path, patterns) {
-                return true;
-            }
-        } else if file_type.is_file() && path.extension().and_then(|e| e.to_str()) == Some("rs") {
-            let Ok(contents) = fs::read_to_string(&path) else {
-                return true;
-            };
-            for pattern in patterns {
-                if contents.contains(pattern) {
-                    return true;
-                }
-            }
-        }
-    }
-
-    false
 }
 
 #[cfg(test)]
@@ -327,7 +226,7 @@ mod tests {
             },
         ];
 
-        let suggestions = analyze(None, &deps, &rules).unwrap();
+        let suggestions = analyze(&deps, &rules, None).unwrap();
         assert_eq!(suggestions.len(), 1);
         assert_eq!(suggestions[0].current, "lazy_static");
         assert_eq!(suggestions[0].recommended, "std::sync::LazyLock");
@@ -348,7 +247,6 @@ mod tests {
                 direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
             ResolvedDep {
-                // Use a crate name that definitely isn't used in this test file
                 name: "some_unused_crate".into(),
                 version: "1.0.0".into(),
                 enabled_features: vec![],
@@ -360,7 +258,7 @@ mod tests {
             },
         ];
 
-        // Create a custom rule to avoid triggering the usage grep for real dependencies
+        // Exercise a reviewed combination independently of the current directory.
         let custom_rule = Rule {
             pattern: "reqwest+some_unused_crate".into(),
             include_transitive: false,
@@ -368,13 +266,13 @@ mod tests {
             kind: SuggestionKind::FeatureOptimization,
             reason: "".into(),
             source: "".into(),
-            condition: None,
+            condition: Some("verify API and feature compatibility".into()),
             confidence: Confidence::High,
             migration_risk: MigrationRisk::Low,
             evidence_source: EvidenceSource::Heuristic,
         };
 
-        let suggestions: Vec<_> = analyze(None, &deps, &[custom_rule])
+        let suggestions: Vec<_> = analyze(&deps, &[custom_rule], None)
             .unwrap()
             .into_iter()
             .filter(|s| s.current == "reqwest+some_unused_crate")
@@ -386,6 +284,10 @@ mod tests {
             SuggestionKind::FeatureOptimization
         ));
         assert_eq!(suggestions[0].impact, Impact::Low);
+        assert_eq!(
+            suggestions[0].condition.as_deref(),
+            Some("verify API and feature compatibility")
+        );
     }
 
     #[test]
@@ -403,7 +305,7 @@ mod tests {
             direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
         }];
 
-        let suggestions = analyze(None, &deps, &rules).unwrap();
+        let suggestions = analyze(&deps, &rules, None).unwrap();
         assert!(
             !suggestions
                 .iter()
@@ -426,7 +328,7 @@ mod tests {
             direct_kinds: vec![], // transitive — should be ignored
         }];
 
-        let suggestions = analyze(None, &deps, &rules).unwrap();
+        let suggestions = analyze(&deps, &rules, None).unwrap();
         assert!(
             suggestions.is_empty(),
             "transitive deps should not trigger suggestions"
@@ -469,7 +371,7 @@ mod tests {
             },
         ];
 
-        let suggestions = analyze(None, &deps, &rules).unwrap();
+        let suggestions = analyze(&deps, &rules, None).unwrap();
         assert_eq!(suggestions.len(), 3);
 
         let names: Vec<&str> = suggestions.iter().map(|s| s.current.as_str()).collect();
@@ -505,7 +407,7 @@ mod tests {
             },
         ];
 
-        let suggestions = analyze(None, &deps, &rules).unwrap();
+        let suggestions = analyze(&deps, &rules, None).unwrap();
         assert!(
             suggestions.is_empty(),
             "modern deps should not trigger any suggestions"
@@ -538,7 +440,7 @@ mod tests {
             is_direct: false,
             direct_kinds: vec![],
         };
-        let findings = analyze(None, &[dep], &load_rules().expect("embedded rules"))
+        let findings = analyze(&[dep], &load_rules().expect("embedded rules"), None)
             .expect("organization policy");
         assert!(findings.iter().any(|f| f.current == "fxhash"
             && f.kind == SuggestionKind::Unmaintained
