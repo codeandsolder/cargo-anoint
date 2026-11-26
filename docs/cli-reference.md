@@ -63,11 +63,13 @@ Top-level fields:
 | `--policy=PATH` | Explicit `anoint.toml` for code-audit suppressions. |
 | `--json` | Output findings as unified JSON (`code_audit` key). |
 | `--sarif` | Output findings as SARIF 2.1.0 JSON (for `upload-sarif` in GitHub Actions). |
-| `--diff` | Audit only lines changed in `git diff HEAD`. |
-| `--include-tests` | Also scan `tests/`, `examples/`, and `benches/` (default: `src/` only). |
+| `--diff` | Audit only tracked lines changed in `git diff HEAD`, including hardcoded findings when requested. |
+| `--include-tests` | Include test-only source items and conventional test, example and benchmark trees. |
 | `--hardcoded` | Also scan for hardcoded values: magic numbers, API keys, IPs, URLs, credentials. |
-| `--fail-on-confidence=FLOAT` | Exit non-zero if any finding has confidence ≥ this value (0.0–1.0). |
+| `--fail-on-confidence=FLOAT` | Exit non-zero if any retained source-quality finding has confidence ≥ this value (0.0–1.0); lowers the reporting threshold if necessary. Hardcoded findings have no confidence score. |
 | `--verbose` | Show every finding instead of a concise summary. |
+
+By default, the audit discovers Cargo package roots and declared targets without resolving dependencies, scans Rust source within each selected root (including build scripts and custom source directories), and excludes nested packages, generated/vendor directories and conventional test-only targets. A standalone directory without Cargo.toml is also supported. Oversized source fails the scan instead of being silently skipped. Directory symlinks are not traversed. Modules reached only through paths outside the package root are not recursively discovered.
 
 ## Policy file (`anoint.toml`)
 

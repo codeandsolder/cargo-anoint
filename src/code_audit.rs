@@ -1,6 +1,6 @@
 //! Static Rust code audit for suspicious complexity and brittle patterns.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -10,9 +10,11 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tree_sitter::{Node, Parser};
 
+use crate::bs_detector::{BSHit, HardcodedScanner};
+
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum BullshitKind {
     FakeComplexity,
     CargoCult,
@@ -74,7 +76,7 @@ pub struct CodeAuditConfig {
     pub max_file_bytes: u64,
     pub ignore_paths: Vec<String>,
     pub ignore_kinds: HashSet<BullshitKind>,
-    /// Scan tests/, examples/, and benches/ in addition to src/. Default: false.
+    /// Include test-only items and conventional test, example and benchmark trees.
     pub include_tests: bool,
 }
 
@@ -118,77 +120,95 @@ pub fn merge_reports(reports: Vec<CodeAuditReport>) -> CodeAuditReport {
     }
 }
 
-///
+/// Audit the selected package or workspace source tree.
 /// # Errors
-/// Returns an error if source files cannot be read or the scan patterns cannot be initialized.
+/// Returns an error if source discovery, reading, or scanning fails.
 pub fn scan_project(
     manifest_path: Option<&Path>,
     config: &CodeAuditConfig,
 ) -> Result<CodeAuditReport> {
-    scan_project_with_filter(manifest_path, config, None)
+    Ok(scan_project_with_options(manifest_path, config, AuditOptions::default())?.report)
 }
 
-///
+/// Optional scan modes for a single source traversal.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct AuditOptions {
+    /// Restrict findings to tracked lines changed since HEAD.
+    pub diff_only: bool,
+    /// Include hardcoded-value findings.
+    pub hardcoded: bool,
+}
+
+/// Results of a source traversal.
+#[derive(Debug)]
+pub struct ProjectAudit {
+    /// Source quality findings.
+    pub report: CodeAuditReport,
+    /// Hardcoded-value findings, if requested.
+    pub hardcoded_values: Option<Vec<BSHit>>,
+}
+
+/// Audit with optional Git diff and hardcoded-value analysis.
 /// # Errors
-/// Returns an error if Git diff collection or source scanning fails.
-pub fn scan_git_diff(
+/// Returns an error if source discovery, Git diff collection, reading, or scanning fails.
+pub fn scan_project_with_options(
     manifest_path: Option<&Path>,
     config: &CodeAuditConfig,
-) -> Result<CodeAuditReport> {
-    let base_dir = project_base_dir(manifest_path);
-    let filter = DiffFilter::from_git_diff(base_dir)?;
-    scan_project_with_filter(manifest_path, config, Some(&filter))
-}
-
-fn scan_project_with_filter(
-    manifest_path: Option<&Path>,
-    config: &CodeAuditConfig,
-    diff_filter: Option<&DiffFilter>,
-) -> Result<CodeAuditReport> {
-    let base_dir = manifest_path
-        .and_then(Path::parent)
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-
-    let mut files = Vec::new();
-    let src_dir = base_dir.join("src");
-    if src_dir.is_dir() {
-        collect_rust_files(&src_dir, config, &mut files)?;
-        if config.include_tests {
-            for dir in &["tests", "examples", "benches"] {
-                collect_rust_files(&base_dir.join(dir), config, &mut files)?;
-            }
-        }
+    options: AuditOptions,
+) -> Result<ProjectAudit> {
+    let diff_filter = if options.diff_only {
+        let base_dir = project_base_dir(manifest_path).canonicalize()?;
+        Some(DiffFilter::from_git_diff(&base_dir)?)
     } else {
-        // Non-standard layout: scan the manifest dir itself for .rs files
-        collect_rust_files(base_dir, config, &mut files)?;
+        None
+    };
+    let hardcoded_scanner = options.hardcoded.then(HardcodedScanner::new).transpose()?;
+    let mut hardcoded_values = options.hardcoded.then(Vec::new);
+    let mut files = source_files(manifest_path, config)?;
+    if let Some(filter) = &diff_filter {
+        files.retain(|file| filter.contains_file(file));
     }
 
     let mut alerts = Vec::new();
     for file in &files {
-        if is_ignored_path(file, config) {
-            continue;
-        }
+        let size = fs::metadata(file)?.len();
+        anyhow::ensure!(
+            size <= config.max_file_bytes,
+            "Rust source {} is {size} bytes, exceeding the audit limit of {} bytes; exclude it explicitly if intended",
+            file.display(),
+            config.max_file_bytes
+        );
         let code = fs::read_to_string(file)
             .with_context(|| format!("failed to read {}", file.display()))?;
-        let mut file_alerts = scan_code(&code, file, config)?;
-        if let Some(filter) = diff_filter {
-            file_alerts.retain(|alert| filter.includes(alert));
+        let masks = parse_ignored_ranges(&code, config.include_tests)?;
+        let mut file_alerts = scan_masked_code(&code, file, config, &masks)?;
+        if let (Some(scanner), Some(hits)) = (&hardcoded_scanner, &mut hardcoded_values) {
+            let source = mask_ranges(&code, masks.excluded.iter().copied())?;
+            let mut file_hits = scanner.scan(&source, file);
+            if let Some(filter) = &diff_filter {
+                file_hits.retain(|hit| filter.includes(file, hit.line));
+            }
+            hits.extend(file_hits);
+        }
+        if let Some(filter) = &diff_filter {
+            file_alerts.retain(|alert| filter.includes(file, alert.line));
         }
         alerts.extend(file_alerts);
     }
 
     alerts.sort_by(|a, b| {
         b.severity
-            .partial_cmp(&a.severity)
-            .unwrap_or(std::cmp::Ordering::Equal)
+            .total_cmp(&a.severity)
             .then_with(|| a.file.cmp(&b.file))
             .then_with(|| a.line.cmp(&b.line))
     });
 
-    Ok(CodeAuditReport {
-        files_scanned: files.len(),
-        alerts,
+    Ok(ProjectAudit {
+        report: CodeAuditReport {
+            files_scanned: files.len(),
+            alerts,
+        },
+        hardcoded_values,
     })
 }
 
@@ -205,13 +225,22 @@ pub fn scan_code(
         return Ok(Vec::new());
     }
 
-    let ignored_ranges = parse_ignored_ranges(code)?;
-    let masked = mask_ranges(code, &ignored_ranges);
+    let masks = parse_ignored_ranges(code, config.include_tests)?;
+    scan_masked_code(code, &file, config, &masks)
+}
+
+fn scan_masked_code(
+    code: &str,
+    file: &Path,
+    config: &CodeAuditConfig,
+    masks: &SourceMasks,
+) -> Result<Vec<BullshitAlert>> {
+    let masked = mask_ranges(code, masks.excluded.iter().chain(&masks.literals).copied())?;
     let mut alerts = Vec::new();
 
-    scan_regex_patterns(&masked, &file, &mut alerts)?;
-    scan_line_patterns(&masked, &file, &mut alerts);
-    scan_function_complexity(&masked, &file, &mut alerts);
+    scan_regex_patterns(&masked, file, &mut alerts)?;
+    scan_line_patterns(&masked, file, &mut alerts);
+    scan_function_complexity(&masked, file, &mut alerts);
 
     alerts.retain(|alert| alert.confidence >= config.confidence_threshold);
     alerts.retain(|alert| !config.ignore_kinds.contains(&alert.kind));
@@ -252,40 +281,100 @@ fn is_ignored_path(path: &Path, config: &CodeAuditConfig) -> bool {
         .any(|pattern| path.contains(pattern))
 }
 
-fn collect_rust_files(
-    dir: &Path,
+fn source_files(
+    manifest_path: Option<&Path>,
     config: &CodeAuditConfig,
-    files: &mut Vec<PathBuf>,
-) -> Result<()> {
-    if !dir.exists() {
-        return Ok(());
+) -> Result<BTreeSet<PathBuf>> {
+    let base = project_base_dir(manifest_path).canonicalize()?;
+    let default_manifest = base.join("Cargo.toml");
+    let manifest = manifest_path.unwrap_or(&default_manifest);
+    let mut files = BTreeSet::new();
+    if !manifest.try_exists()? {
+        anyhow::ensure!(
+            manifest_path.is_none(),
+            "manifest {} does not exist",
+            manifest.display()
+        );
+        collect_rust_files(&base, &base, None, config, &mut files)?;
+        return Ok(files);
     }
 
+    // Cargo already understands virtual workspaces, inherited settings,
+    // explicit target paths and custom build scripts. No dependency resolution
+    // is needed to discover the package source layout.
+    let manifest = manifest.canonicalize()?;
+    let metadata = cargo_metadata::MetadataCommand::new()
+        .manifest_path(&manifest)
+        .no_deps()
+        .exec()
+        .context("discover Cargo source layout")?;
+    let selected = metadata
+        .packages
+        .iter()
+        .find(|pkg| pkg.manifest_path.as_std_path() == manifest);
+    let packages: Vec<_> = selected.map_or_else(|| metadata.workspace_packages(), |pkg| vec![pkg]);
+    for package in packages {
+        let root = package
+            .manifest_path
+            .as_std_path()
+            .parent()
+            .context("package manifest has no parent")?;
+        let target_dir = metadata.target_directory.as_std_path();
+        let mut package_files = BTreeSet::new();
+        collect_rust_files(root, root, Some(target_dir), config, &mut package_files)?;
+        let mut included_targets = BTreeSet::new();
+        for target in &package.targets {
+            use cargo_metadata::TargetKind;
+            let path = target.src_path.as_std_path();
+            let test_only = target.kind.iter().all(|kind| {
+                matches!(
+                    kind,
+                    TargetKind::Test | TargetKind::Bench | TargetKind::Example
+                )
+            });
+            if !config.include_tests && test_only {
+                package_files.remove(path);
+            } else if !is_ignored_path(path, config) {
+                included_targets.insert(path.to_path_buf());
+            }
+        }
+        package_files.extend(included_targets);
+        files.extend(package_files);
+    }
+    Ok(files)
+}
+
+fn collect_rust_files(
+    root: &Path,
+    dir: &Path,
+    target_dir: Option<&Path>,
+    config: &CodeAuditConfig,
+    files: &mut BTreeSet<PathBuf>,
+) -> Result<()> {
     for entry in fs::read_dir(dir).with_context(|| format!("failed to read {}", dir.display()))? {
         let entry = entry?;
         let path = entry.path();
+        if is_ignored_path(&path, config) {
+            continue;
+        }
         let name = entry.file_name();
         let name = name.to_string_lossy();
-
         let file_type = entry.file_type()?;
         if file_type.is_dir() {
-            if should_skip_dir(&name) {
+            if should_skip_dir(&name)
+                || target_dir == Some(path.as_path())
+                || (!config.include_tests
+                    && dir == root
+                    && matches!(name.as_ref(), "tests" | "examples" | "benches"))
+                || (target_dir.is_some() && path.join("Cargo.toml").try_exists()?)
+            {
                 continue;
             }
-            collect_rust_files(&path, config, files)?;
-            continue;
-        }
-
-        if !file_type.is_file() || path.extension().and_then(|e| e.to_str()) != Some("rs") {
-            continue;
-        }
-
-        let metadata = entry.metadata()?;
-        if metadata.len() <= config.max_file_bytes {
-            files.push(path);
+            collect_rust_files(root, &path, target_dir, config, files)?;
+        } else if file_type.is_file() && path.extension().is_some_and(|ext| ext == "rs") {
+            files.insert(path);
         }
     }
-
     Ok(())
 }
 
@@ -293,7 +382,7 @@ fn should_skip_dir(name: &str) -> bool {
     name.starts_with('.')
         || matches!(
             name,
-            "target" | "vendor" | "node_modules" | "dist" | "build" | "third_party"
+            "target" | "vendor" | "node_modules" | "dist" | "third_party"
         )
 }
 
@@ -305,64 +394,76 @@ struct DiffFilter {
 
 impl DiffFilter {
     fn from_git_diff(base_dir: &Path) -> Result<Self> {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(base_dir)
-            .arg("diff")
-            .arg("HEAD")
-            .arg("--unified=0")
-            .arg("--relative")
-            .arg("--")
-            .output()
-            .with_context(|| "failed to run git diff HEAD --unified=0")?;
-
-        if !output.status.success() {
-            bail!(
-                "git diff failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            );
+        let names = git_diff(base_dir, &["--name-only", "-z"], None)?;
+        let mut changed_lines = HashMap::new();
+        for name in names
+            .split(|byte| *byte == 0)
+            .filter(|name| !name.is_empty())
+        {
+            let path =
+                PathBuf::from(std::str::from_utf8(name).context("Git diff path is not UTF-8")?);
+            if path.extension().is_none_or(|ext| ext != "rs") {
+                continue;
+            }
+            let patch = git_diff(
+                base_dir,
+                &["--unified=0", "--no-ext-diff", "--no-textconv"],
+                Some(&path),
+            )?;
+            let ranges: Vec<_> = String::from_utf8(patch)
+                .context("Git patch is not UTF-8")?
+                .lines()
+                .filter_map(parse_hunk_new_range)
+                .collect();
+            if !ranges.is_empty() {
+                changed_lines.insert(path, ranges);
+            }
         }
-
         Ok(Self {
             base_dir: base_dir.to_path_buf(),
-            changed_lines: parse_changed_lines(&String::from_utf8_lossy(&output.stdout)),
+            changed_lines,
         })
     }
 
-    fn includes(&self, alert: &BullshitAlert) -> bool {
-        let path = alert
-            .file
-            .strip_prefix(&self.base_dir)
-            .map_or_else(|_| alert.file.clone(), Path::to_path_buf);
-        let path = normalize_diff_path(&path);
-        self.changed_lines.get(&path).is_some_and(|ranges| {
-            ranges
-                .iter()
-                .any(|(start, end)| alert.line >= *start && alert.line <= *end)
-        })
+    fn relative_path(&self, path: &Path) -> PathBuf {
+        normalize_diff_path(path.strip_prefix(&self.base_dir).unwrap_or(path))
+    }
+
+    fn contains_file(&self, path: &Path) -> bool {
+        self.changed_lines.contains_key(&self.relative_path(path))
+    }
+
+    fn includes(&self, file: &Path, line: usize) -> bool {
+        self.changed_lines
+            .get(&self.relative_path(file))
+            .is_some_and(|ranges| {
+                ranges
+                    .iter()
+                    .any(|(start, end)| line >= *start && line <= *end)
+            })
     }
 }
 
-fn parse_changed_lines(diff: &str) -> HashMap<PathBuf, Vec<(usize, usize)>> {
-    let mut current_file: Option<PathBuf> = None;
-    let mut changed = HashMap::<PathBuf, Vec<(usize, usize)>>::new();
-
-    for line in diff.lines() {
-        if let Some(path) = line.strip_prefix("+++ b/") {
-            current_file = Some(PathBuf::from(path));
-            continue;
-        }
-        if line.starts_with("+++ /dev/null") {
-            current_file = None;
-            continue;
-        }
-
-        if let (Some(file), Some(range)) = (current_file.as_ref(), parse_hunk_new_range(line)) {
-            changed.entry(file.clone()).or_default().push(range);
-        }
+fn git_diff(base_dir: &Path, args: &[&str], path: Option<&Path>) -> Result<Vec<u8>> {
+    let mut command = Command::new("git");
+    command
+        .arg("--literal-pathspecs")
+        .arg("-C")
+        .arg(base_dir)
+        .args(["diff", "HEAD", "--relative", "--no-renames", "--no-color"])
+        .args(args)
+        .arg("--");
+    if let Some(path) = path {
+        command.arg(path);
     }
-
-    changed
+    let output = command.output().context("run git diff HEAD")?;
+    if !output.status.success() {
+        bail!(
+            "git diff failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(output.stdout)
 }
 
 fn parse_hunk_new_range(line: &str) -> Option<(usize, usize)> {
@@ -394,7 +495,13 @@ fn normalize_diff_path(path: &Path) -> PathBuf {
     normalized
 }
 
-fn parse_ignored_ranges(code: &str) -> Result<Vec<(usize, usize)>> {
+#[derive(Default)]
+struct SourceMasks {
+    excluded: Vec<(usize, usize)>,
+    literals: Vec<(usize, usize)>,
+}
+
+fn parse_ignored_ranges(code: &str, include_tests: bool) -> Result<SourceMasks> {
     let mut parser = Parser::new();
     parser
         .set_language(&tree_sitter_rust::LANGUAGE.into())
@@ -403,80 +510,90 @@ fn parse_ignored_ranges(code: &str) -> Result<Vec<(usize, usize)>> {
         .parse(code, None)
         .ok_or_else(|| anyhow::anyhow!("tree-sitter failed to parse Rust source"))?;
 
-    let mut ranges = Vec::new();
-    collect_ignored_ranges(tree.root_node(), code.as_bytes(), &mut ranges);
+    let mut ranges = SourceMasks::default();
+    collect_ignored_ranges(
+        tree.root_node(),
+        code.as_bytes(),
+        include_tests,
+        &mut ranges,
+    );
     Ok(ranges)
 }
 
-fn collect_ignored_ranges(node: Node<'_>, code: &[u8], ranges: &mut Vec<(usize, usize)>) {
+fn collect_ignored_ranges(
+    node: Node<'_>,
+    code: &[u8],
+    include_tests: bool,
+    ranges: &mut SourceMasks,
+) {
     let kind = node.kind();
 
-    // Mask string/comment literals
+    if matches!(kind, "line_comment" | "block_comment") {
+        ranges.excluded.push((node.start_byte(), node.end_byte()));
+        return;
+    }
     if matches!(
         kind,
-        "line_comment" | "block_comment" | "string_literal" | "raw_string_literal" | "char_literal"
+        "string_literal" | "raw_string_literal" | "char_literal"
     ) {
-        ranges.push((node.start_byte(), node.end_byte()));
+        ranges.literals.push((node.start_byte(), node.end_byte()));
         return;
     }
 
-    // At container levels, scan for attribute+item pairs where the attribute is #[test]
-    // or #[cfg(test)]. The attribute is a SIBLING of the item, not a child.
-    if matches!(kind, "source_file" | "declaration_list") {
-        let children: Vec<Node<'_>> = {
-            let mut cursor = node.walk();
-            node.children(&mut cursor).collect()
-        };
-        let mut i = 0;
-        while i < children.len() {
-            let child = children[i];
-            if child.kind() == "attribute_item" && is_test_attr(child, code) {
-                // Mask this attribute and the item that follows it (skip over any other
-                // attribute_item siblings until we hit the actual item)
-                ranges.push((child.start_byte(), child.end_byte()));
-                let mut j = i + 1;
-                while j < children.len() {
-                    let next = children[j];
-                    ranges.push((next.start_byte(), next.end_byte()));
-                    if next.kind() != "attribute_item" {
-                        i = j;
-                        break;
-                    }
-                    j += 1;
+    // Attributes and comments preceding an item are siblings in the grammar.
+    // Only skip an item when a test-only attribute actually applies to it.
+    if !include_tests && matches!(kind, "source_file" | "declaration_list" | "block") {
+        let mut cursor = node.walk();
+        let mut test_only = false;
+        for child in node.named_children(&mut cursor) {
+            match child.kind() {
+                "attribute_item" => {
+                    test_only |= is_test_attr(child, code);
+                    collect_ignored_ranges(child, code, include_tests, ranges);
                 }
-            } else {
-                collect_ignored_ranges(child, code, ranges);
+                "line_comment" | "block_comment" => {
+                    ranges.excluded.push((child.start_byte(), child.end_byte()));
+                }
+                _ if test_only => {
+                    ranges.excluded.push((child.start_byte(), child.end_byte()));
+                    test_only = false;
+                }
+                _ => collect_ignored_ranges(child, code, include_tests, ranges),
             }
-            i += 1;
         }
         return;
     }
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_ignored_ranges(child, code, ranges);
+        collect_ignored_ranges(child, code, include_tests, ranges);
     }
 }
 
 fn is_test_attr(node: Node<'_>, code: &[u8]) -> bool {
-    std::str::from_utf8(&code[node.start_byte()..node.end_byte()]).is_ok_and(|text| {
+    node.utf8_text(code).is_ok_and(|text| {
         let t: String = text.chars().filter(|c| !c.is_whitespace()).collect();
-        t == "#[test]" || t.contains("#[cfg(test)]") || t.contains("#[cfg(any(test")
+        matches!(t.as_str(), "#[test]" | "#[cfg(test)]")
+            || ["#[tokio::test", "#[async_std::test"].iter().any(|prefix| {
+                t.strip_prefix(prefix)
+                    .is_some_and(|rest| rest.starts_with('(') || rest == "]")
+            })
     })
 }
 
-fn mask_ranges(code: &str, ranges: &[(usize, usize)]) -> String {
+fn mask_ranges(code: &str, ranges: impl IntoIterator<Item = (usize, usize)>) -> Result<String> {
     let mut bytes = code.as_bytes().to_vec();
     for (start, end) in ranges {
-        for idx in *start..*end {
-            if let Some(byte) = bytes.get_mut(idx)
-                && *byte != b'\n'
-            {
+        let range = bytes
+            .get_mut(start..end)
+            .context("invalid tree-sitter source range")?;
+        for byte in range {
+            if *byte != b'\n' {
                 *byte = b' ';
             }
         }
     }
-    String::from_utf8(bytes).unwrap_or_else(|_| code.to_string())
+    String::from_utf8(bytes).context("source masking produced invalid UTF-8")
 }
 
 fn scan_regex_patterns(code: &str, file: &Path, alerts: &mut Vec<BullshitAlert>) -> Result<()> {
@@ -888,7 +1005,7 @@ fn dedupe_alerts(alerts: &mut Vec<BullshitAlert>) {
             .cmp(&b.file)
             .then_with(|| a.line.cmp(&b.line))
             .then_with(|| a.column.cmp(&b.column))
-            .then_with(|| format!("{:?}", a.kind).cmp(&format!("{:?}", b.kind)))
+            .then_with(|| a.kind.cmp(&b.kind))
     });
     alerts.dedup_by(|a, b| {
         a.file == b.file && a.line == b.line && a.column == b.column && a.kind == b.kind
@@ -982,6 +1099,155 @@ fn main() {
     }
 
     #[test]
+    fn includes_only_actual_test_items_when_requested() -> Result<()> {
+        let source = r#"#[cfg(test)]
+// comment between attribute and item
+#[allow(dead_code)]
+fn only_test() { value().unwrap(); }
+#[cfg(any(test, feature = "enabled"))]
+fn production_feature() { value().unwrap(); }
+#[tokio::test]
+async fn async_test() { value().unwrap(); }
+fn production() { value().unwrap(); }
+"#;
+        let lines = |cfg: &CodeAuditConfig| -> Result<Vec<usize>> {
+            Ok(scan_code(source, "src/lib.rs", cfg)?
+                .iter()
+                .filter(|alert| alert.kind == BullshitKind::UnwrapAbuse)
+                .map(|alert| alert.line)
+                .collect())
+        };
+        assert_eq!(lines(&config())?, vec![6, 9]);
+        assert_eq!(
+            lines(&CodeAuditConfig {
+                include_tests: true,
+                ..config()
+            })?,
+            vec![4, 6, 8, 9]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn source_discovery_respects_cargo_targets_and_nested_packages() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let root = tmp.path();
+        let manifest = root.join("Cargo.toml");
+        fs::write(
+            &manifest,
+            r#"[package]
+name = "audit-targets"
+version = "0.1.0"
+edition = "2024"
+build = "custom/build.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "custom"
+path = "custom/main.rs"
+
+[[test]]
+name = "outside"
+path = "custom/check.rs"
+"#,
+        )?;
+        for directory in ["src", "custom", "tests", "target", "nested"] {
+            fs::create_dir(root.join(directory))?;
+        }
+        fs::write(
+            root.join("nested/Cargo.toml"),
+            "[package]\nname = \"nested\"\nversion = \"0.1.0\"",
+        )?;
+        for file in [
+            "src/lib.rs",
+            "custom/main.rs",
+            "custom/build.rs",
+            "custom/check.rs",
+            "tests/integration.rs",
+            "target/generated.rs",
+            "nested/other.rs",
+        ] {
+            fs::write(root.join(file), "fn f() { value().unwrap(); }")?;
+        }
+        let report = scan_project(Some(&manifest), &config())?;
+        let names: BTreeSet<_> = report
+            .alerts
+            .iter()
+            .map(|alert| alert.file.strip_prefix(root).map(Path::to_path_buf))
+            .collect::<std::result::Result<_, _>>()?;
+        assert_eq!(
+            names,
+            ["src/lib.rs", "custom/main.rs", "custom/build.rs"]
+                .into_iter()
+                .map(PathBuf::from)
+                .collect()
+        );
+        assert_eq!(report.files_scanned, 3);
+        let report = scan_project(
+            Some(&manifest),
+            &CodeAuditConfig {
+                include_tests: true,
+                ..config()
+            },
+        )?;
+        assert_eq!(report.files_scanned, 5);
+        Ok(())
+    }
+
+    #[test]
+    fn oversized_source_is_not_silently_clean() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let manifest = tmp.path().join("Cargo.toml");
+        fs::write(
+            &manifest,
+            "[package]\nname = \"large-source\"\nversion = \"0.1.0\"\n[lib]\npath = \"lib.rs\"",
+        )?;
+        fs::write(tmp.path().join("lib.rs"), "fn f() { value().unwrap(); }")?;
+        let cfg = CodeAuditConfig {
+            max_file_bytes: 8,
+            ..config()
+        };
+        assert!(scan_project(Some(&manifest), &cfg).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn hardcoded_scan_uses_same_test_and_comment_exclusions() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let manifest = tmp.path().join("Cargo.toml");
+        fs::write(
+            &manifest,
+            "[package]\nname = \"hardcoded-scope\"\nversion = \"0.1.0\"\n[lib]\npath = \"lib.rs\"",
+        )?;
+        fs::write(
+            tmp.path().join("lib.rs"),
+            r#"// let x = 99999;
+#[cfg(test)]
+fn test_only() { let x = 98765; }
+fn production() { let x = 87654; }
+"#,
+        )?;
+        let audit = scan_project_with_options(
+            Some(&manifest),
+            &config(),
+            AuditOptions {
+                hardcoded: true,
+                ..AuditOptions::default()
+            },
+        )?;
+        let hits = audit.hardcoded_values.context("hardcoded scan requested")?;
+        assert_eq!(
+            hits.iter()
+                .map(|hit| hit.value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["87654"]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn parses_diff_changed_ranges() {
         let diff = r#"diff --git a/src/main.rs b/src/main.rs
 index 111..222 100644
@@ -992,7 +1258,7 @@ index 111..222 100644
 +    thing().unwrap();
 +}
 "#;
-        let changed = parse_changed_lines(diff);
-        assert_eq!(changed.get(Path::new("src/main.rs")), Some(&vec![(2, 4)]));
+        let changed: Vec<_> = diff.lines().filter_map(parse_hunk_new_range).collect();
+        assert_eq!(changed, vec![(2, 4)]);
     }
 }

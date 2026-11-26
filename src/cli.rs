@@ -164,9 +164,9 @@ pub struct CodeAuditOpts {
 
     /// Exit non-zero if any finding has confidence >= this value (0.0–1.0).
     #[arg(long, value_name = "FLOAT")]
-    pub fail_on_confidence: Option<f64>,
+    pub fail_on_confidence: Option<f32>,
 
-    /// Also scan tests/, examples/, and benches/ (default: src/ only).
+    /// Include test-only Rust items and tests, examples, and benches.
     #[arg(long)]
     pub include_tests: bool,
 }

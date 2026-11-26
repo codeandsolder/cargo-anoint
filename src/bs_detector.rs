@@ -1,6 +1,6 @@
 //! BS Detector — finds hardcoded bullshit values in Rust source files.
 //!
-//! Scans `.rs` files for:
+//! Scans source text for:
 //! - Magic numbers (non-trivial numeric literals)
 //! - Hardcoded URLs
 //! - API keys / tokens / secrets
@@ -8,7 +8,6 @@
 //! - IP addresses
 //! - Hardcoded credentials
 
-use std::fs;
 use std::path::Path;
 
 use colored::Colorize;
@@ -87,43 +86,20 @@ impl Patterns {
     }
 }
 
-/// Scan a directory tree for hardcoded bullshit values.
-///
-/// # Errors
-/// Returns an error if a built-in regular expression cannot be compiled or a source file or directory cannot be read.
-pub fn scan_dir(root: &Path) -> anyhow::Result<Vec<BSHit>> {
-    let patterns = Patterns::new()?;
-    let mut hits = Vec::new();
-    scan_path(root, &mut hits, &patterns)?;
-    hits.sort_by(|a, b| a.file.cmp(&b.file).then(a.line.cmp(&b.line)));
-    Ok(hits)
-}
+pub(crate) struct HardcodedScanner(Patterns);
 
-fn scan_path(dir: &Path, hits: &mut Vec<BSHit>, patterns: &Patterns) -> anyhow::Result<()> {
-    use anyhow::Context;
-    for entry in fs::read_dir(dir).with_context(|| format!("failed to read {}", dir.display()))? {
-        let entry = entry?;
-        let path = entry.path();
-        let file_type = entry.file_type()?;
-        if file_type.is_dir() {
-            let skip = ["target", ".git", "node_modules", ".cargo"];
-            if path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|name| skip.contains(&name))
-            {
-                continue;
-            }
-            scan_path(&path, hits, patterns)?;
-        } else if file_type.is_file() && path.extension().and_then(|e| e.to_str()) == Some("rs") {
-            let content = fs::read_to_string(&path)
-                .with_context(|| format!("failed to read {}", path.display()))?;
-            for (i, line) in content.lines().enumerate() {
-                check_line(&path, i + 1, line, hits, patterns);
-            }
-        }
+impl HardcodedScanner {
+    pub(crate) fn new() -> Result<Self, regex::Error> {
+        Ok(Self(Patterns::new()?))
     }
-    Ok(())
+
+    pub(crate) fn scan(&self, source: &str, path: &Path) -> Vec<BSHit> {
+        let mut hits = Vec::new();
+        for (index, line) in source.lines().enumerate() {
+            check_line(path, index + 1, line, &mut hits, &self.0);
+        }
+        hits
+    }
 }
 
 /// Check a single line for hardcoded bullshit.
@@ -439,17 +415,9 @@ pub fn render_bs_hits(hits: &[BSHit]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
-    use tempfile::TempDir;
 
     fn check_line(path: &Path, line_num: usize, line: &str, hits: &mut Vec<BSHit>) {
         super::check_line(path, line_num, line, hits, &Patterns::new().unwrap());
-    }
-
-    fn create_test_file(dir: &Path, name: &str, content: &str) -> PathBuf {
-        let path = dir.join(name);
-        fs::write(&path, content).unwrap();
-        path
     }
 
     #[test]
@@ -590,34 +558,5 @@ mod tests {
                 .count(),
             1
         );
-    }
-
-    #[test]
-    fn test_scan_directory() {
-        let tmp = TempDir::new().unwrap();
-        create_test_file(tmp.path(), "magic.rs", "let x = 4096;\nlet y = 8192;");
-        create_test_file(tmp.path(), "keys.rs", r#"let api_key = "sk-real-key";"#);
-
-        let hits = scan_dir(tmp.path()).unwrap();
-        assert!(
-            hits.len() >= 3,
-            "should find at least 3 hits, got {}",
-            hits.len()
-        );
-
-        let categories: Vec<_> = hits.iter().map(|h| &h.category).collect();
-        assert!(categories.contains(&&BSCategory::MagicNumber));
-        assert!(categories.contains(&&BSCategory::ApiKeyOrToken));
-    }
-
-    #[test]
-    fn test_skip_target_directory() {
-        let tmp = TempDir::new().unwrap();
-        let target_dir = tmp.path().join("target");
-        fs::create_dir_all(&target_dir).unwrap();
-        create_test_file(&target_dir, "magic.rs", "let x = 99999;");
-
-        let hits = scan_dir(tmp.path()).unwrap();
-        assert!(hits.is_empty(), "target/ should be skipped");
     }
 }

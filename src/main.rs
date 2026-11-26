@@ -473,21 +473,19 @@ fn run_code_audit_command(opts: &cli::CodeAuditOpts) -> Result<()> {
     if opts.include_tests {
         code_audit_config.include_tests = true;
     }
-    let report = if opts.diff {
-        cargo_anoint::code_audit::scan_git_diff(manifest, &code_audit_config)?
-    } else {
-        cargo_anoint::code_audit::scan_project(manifest, &code_audit_config)?
-    };
-
-    let bs_hits = if opts.hardcoded {
-        let root = manifest
-            .and_then(Path::parent)
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."));
-        cargo_anoint::bs_detector::scan_dir(root)?
-    } else {
-        Vec::new()
-    };
+    if let Some(threshold) = opts.fail_on_confidence {
+        code_audit_config.confidence_threshold =
+            code_audit_config.confidence_threshold.min(threshold);
+    }
+    let audit = cargo_anoint::code_audit::scan_project_with_options(
+        manifest,
+        &code_audit_config,
+        cargo_anoint::code_audit::AuditOptions {
+            diff_only: opts.diff,
+            hardcoded: opts.hardcoded,
+        },
+    )?;
+    let report = audit.report;
 
     if opts.sarif {
         cargo_anoint::output::render_sarif(&report)?;
@@ -497,16 +495,16 @@ fn run_code_audit_command(opts: &cli::CodeAuditOpts) -> Result<()> {
             workspace_scan: false,
             packages: Vec::new(),
             code_audit: Some(&report),
-            hardcoded_values: if opts.hardcoded { Some(&bs_hits) } else { None },
+            hardcoded_values: audit.hardcoded_values.as_deref(),
             security_advisories: cargo_anoint::advisories::AdvisoryReport::Skipped,
         };
         cargo_anoint::output::render_unified_json(&unified)?;
     } else {
         println!("🙏 cargo-anoint v{}", env!("CARGO_PKG_VERSION"));
         cargo_anoint::output::render_code_audit_report(&report, opts.verbose);
-        if opts.hardcoded {
+        if let Some(hits) = &audit.hardcoded_values {
             println!();
-            cargo_anoint::bs_detector::render_bs_hits(&bs_hits);
+            cargo_anoint::bs_detector::render_bs_hits(hits);
         }
     }
 
@@ -514,7 +512,7 @@ fn run_code_audit_command(opts: &cli::CodeAuditOpts) -> Result<()> {
         let gated_count = report
             .alerts
             .iter()
-            .filter(|a| f64::from(a.confidence) >= threshold)
+            .filter(|a| a.confidence >= threshold)
             .count();
         if gated_count > 0 {
             eprintln!(

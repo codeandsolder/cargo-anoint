@@ -992,6 +992,99 @@ lazy_static = "1"
 }
 
 #[test]
+fn diff_handles_non_ascii_paths_and_filters_both_detectors() -> anyhow::Result<()> {
+    use std::fs;
+    use std::process::Command as Git;
+    let tmp = tempfile::tempdir()?;
+    let root = tmp.path();
+    let member = root.join("member");
+    fs::create_dir_all(member.join("src"))?;
+    fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"member\"]\nresolver = \"3\"",
+    )?;
+    let manifest = member.join("Cargo.toml");
+    fs::write(
+        &manifest,
+        "[package]\nname = \"audit-diff\"\nversion = \"0.1.0\"\nedition = \"2024\"",
+    )?;
+    fs::write(member.join("src/lib.rs"), "")?;
+    let source = member.join("src/żółć test.rs");
+    fs::write(&source, "fn old() { let x = 45678; value().unwrap(); }\n")?;
+    for args in [
+        vec!["init"],
+        vec!["add", "."],
+        vec![
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            "initial",
+        ],
+    ] {
+        assert!(
+            Git::new("git")
+                .current_dir(root)
+                .args(args)
+                .status()?
+                .success()
+        );
+    }
+    fs::write(
+        &source,
+        "fn old() { let x = 45678; value().unwrap(); }\nfn new() { let x = 87654; value().unwrap(); }\n",
+    )?;
+    let output = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"))
+        .args(["bs", "--json", "--diff", "--hardcoded", "--manifest-path"])
+        .arg(&manifest)
+        .output()?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let alerts = report["code_audit"]["alerts"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("missing alerts"))?;
+    let hits = report["hardcoded_values"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("missing hardcoded values"))?;
+    assert_eq!(report["code_audit"]["files_scanned"], 1);
+    assert_eq!(alerts.len(), 1);
+    assert_eq!(alerts[0]["line"], 2);
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0]["value"], "87654");
+    Ok(())
+}
+
+#[test]
+fn explicit_confidence_gate_cannot_be_hidden_by_policy_threshold() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let manifest = tmp.path().join("Cargo.toml");
+    std::fs::write(
+        &manifest,
+        "[package]\nname = \"audit-gate\"\nversion = \"0.1.0\"\n[lib]\npath = \"lib.rs\"",
+    )?;
+    std::fs::write(tmp.path().join("lib.rs"), "fn f() { value().unwrap(); }")?;
+    std::fs::write(
+        tmp.path().join("anoint.toml"),
+        "[settings]\nmin_confidence = 0.99",
+    )?;
+    Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"))
+        .args(["bs", "--fail-on-confidence", "0.72", "--manifest-path"])
+        .arg(&manifest)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("exiting with non-zero status"));
+    Ok(())
+}
+
+#[test]
 fn test_bs_hardcoded_flag_reports_hardcoded_values() {
     use std::fs;
     use tempfile::TempDir;

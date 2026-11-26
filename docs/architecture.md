@@ -14,7 +14,7 @@
 | `feedback` | `--feedback` — aggregate counts + code-audit "hotspots" without listing crate names or hitting the network |
 | `output` | Human-readable reports, JSON helpers (`JsonReportUnified`), code-audit summary, advisory rendering |
 | `updater` | `cargo anoint --update-rules` — fetch candidate rules from blessed.rs JSON for manual review |
-| `code_audit` | Static bullshit-detector pass; scans `src/` by default; `#[test]`/`#[cfg(test)]` blocks masked via tree-sitter; opt in to `tests/`/`examples/`/`benches/` with `--include-tests` |
+| `code_audit` | Static bullshit-detector pass; discovers package source roots and targets using Cargo metadata; masks comments, literals and test-only items via tree-sitter; shares source traversal and diff filtering with the optional hardcoded-value scanner |
 | `bs_detector` | Hardcoded-value scanner (`--hardcoded`): magic numbers, API keys, IPs, URLs, credentials |
 
 ## Typical `cargo anoint` flow
@@ -32,6 +32,6 @@
 ## Data flow boundaries
 
 - **Trust metadata** on suggestions (`impact`, `confidence`, `migration_risk`, `evidence_source`) is rule-driven. All recommendations require manual review; dependency scans do not rewrite manifests.
-- **Code audit** scans `src/` only by default; uses tree-sitter-rust to parse and mask string literals, comments, and test blocks before running line-pattern detectors.
+- **Code audit** discovers Cargo target paths without dependency resolution, scans selected package source trees and uses tree-sitter-rust to mask comments, literals and test-only items before running heuristic detectors. Hardcoded findings share source selection and diff filtering.
 - **`cargo anoint bs`** is read-only; findings require an explicit, semantics-preserving source change.
 - **`--feedback`** always runs suggestion analysis + full code audit for the chosen manifest but does **not** perform crates.io/GitHub/osv.dev fetches — intended for voluntary, low-leak summaries.
