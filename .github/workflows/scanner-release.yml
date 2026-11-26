@@ -1,0 +1,57 @@
+name: Publish pinned cargo-anoint scanner
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Resolve quarantined toolchain
+        id: compiler
+        uses: codeandsolder/ci-workflows/.github/actions/resolve-rust-toolchain@91183d106cd3b1f251fa52d9f3b78429af6f9e7c # main
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: ${{ steps.compiler.outputs.channel }}
+      - name: Setup mandatory sccache
+        uses: codeandsolder/ci-workflows/.github/actions/setup-sccache@91183d106cd3b1f251fa52d9f3b78429af6f9e7c # main
+        with:
+          rust-toolchain: ${{ steps.compiler.outputs.channel }}
+          cache-scope: scanner-release
+      - name: Build portable Linux scanner
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --release --bin cargo-anoint --target-dir "$RUNNER_TEMP/scanner-target"
+          mkdir -p "$RUNNER_TEMP/scanner-release"
+          install -m 0755 "$RUNNER_TEMP/scanner-target/release/cargo-anoint" "$RUNNER_TEMP/scanner-release/cargo-anoint-linux-x86_64"
+          "$RUNNER_TEMP/scanner-release/cargo-anoint-linux-x86_64" anoint --workspace --offline --json --fail-on-overlap > "$RUNNER_TEMP/scanner-release/self-scan.json"
+          jq -e '.workspace_scan and (.packages | length > 0)' "$RUNNER_TEMP/scanner-release/self-scan.json"
+          cd "$RUNNER_TEMP/scanner-release"
+          sha256sum cargo-anoint-linux-x86_64 > cargo-anoint-linux-x86_64.sha256
+      - name: Publish commit-addressed binary and checksum
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="ci-$GITHUB_SHA"
+          cd "$RUNNER_TEMP/scanner-release"
+          gh release create "$tag" cargo-anoint-linux-x86_64 cargo-anoint-linux-x86_64.sha256 --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "CI scanner $GITHUB_SHA" --notes "Linux x86_64 scanner built from $GITHUB_SHA on Ubuntu 24.04 using the locked dependency graph." --latest=false
+      - name: Finalize mandatory sccache
+        if: always()
+        uses: codeandsolder/ci-workflows/.github/actions/finalize-sccache@91183d106cd3b1f251fa52d9f3b78429af6f9e7c # main
