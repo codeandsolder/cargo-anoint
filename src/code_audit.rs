@@ -66,9 +66,48 @@ pub struct BullshitAlert {
     pub suggestion: String,
 }
 
+/// Finite source-audit confidence threshold in the inclusive range 0 to 1.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(try_from = "f32")]
+pub struct AuditThreshold(f32);
+
+impl AuditThreshold {
+    /// The validated numeric threshold.
+    #[must_use = "Returns the threshold value"]
+    pub const fn get(self) -> f32 {
+        self.0
+    }
+
+    /// Select the less restrictive threshold.
+    #[must_use = "Returns the less restrictive threshold"]
+    pub const fn min(self, other: Self) -> Self {
+        Self(self.0.min(other.0))
+    }
+}
+
+impl TryFrom<f32> for AuditThreshold {
+    type Error = anyhow::Error;
+
+    fn try_from(value: f32) -> Result<Self> {
+        anyhow::ensure!(
+            (0.0..=1.0).contains(&value),
+            "confidence threshold must be between 0 and 1"
+        );
+        Ok(Self(value))
+    }
+}
+
+impl std::str::FromStr for AuditThreshold {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        Self::try_from(value.parse::<f32>()?)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CodeAuditConfig {
-    pub confidence_threshold: f32,
+    pub confidence_threshold: AuditThreshold,
     pub max_file_bytes: u64,
     pub ignore_paths: Vec<String>,
     pub ignore_kinds: HashSet<BullshitKind>,
@@ -79,7 +118,7 @@ pub struct CodeAuditConfig {
 impl Default for CodeAuditConfig {
     fn default() -> Self {
         Self {
-            confidence_threshold: 0.60,
+            confidence_threshold: AuditThreshold(0.60),
             max_file_bytes: MAX_FILE_BYTES,
             ignore_paths: Vec::new(),
             ignore_kinds: HashSet::new(),
@@ -90,10 +129,6 @@ impl Default for CodeAuditConfig {
 
 impl CodeAuditConfig {
     fn validate(&self) -> Result<()> {
-        anyhow::ensure!(
-            (0.0..=1.0).contains(&self.confidence_threshold),
-            "confidence threshold must be between 0 and 1"
-        );
         anyhow::ensure!(
             self.max_file_bytes > 0,
             "source file limit must be positive"
@@ -267,7 +302,7 @@ fn scan_masked_code(
         ));
     }
 
-    alerts.retain(|alert| alert.confidence >= config.confidence_threshold);
+    alerts.retain(|alert| alert.confidence >= config.confidence_threshold.get());
     alerts.retain(|alert| !config.ignore_kinds.contains(&alert.kind));
     dedupe_alerts(&mut alerts);
     Ok(alerts)
@@ -1315,11 +1350,7 @@ mod inline {
     #[test]
     fn invalid_scan_config_is_an_error_not_a_clean_report() {
         for threshold in [f32::NAN, f32::INFINITY, -0.01, 1.01] {
-            let cfg = CodeAuditConfig {
-                confidence_threshold: threshold,
-                ..config()
-            };
-            assert!(scan_code("fn f() {}", "lib.rs", &cfg).is_err());
+            assert!(AuditThreshold::try_from(threshold).is_err());
         }
         let cfg = CodeAuditConfig {
             max_file_bytes: 0,

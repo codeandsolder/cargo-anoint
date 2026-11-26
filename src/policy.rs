@@ -1,6 +1,6 @@
 //! Policy layer — parses anoint.toml for suppressions and enforcement settings.
 
-use crate::code_audit::BullshitKind;
+use crate::code_audit::{AuditThreshold, BullshitKind};
 use crate::suggestions::Impact;
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
@@ -70,7 +70,7 @@ pub struct PolicySettings {
 
     /// Optional minimum confidence for source audit findings.
     #[serde(default)]
-    pub min_confidence: Option<f32>,
+    pub min_confidence: Option<AuditThreshold>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -99,13 +99,6 @@ pub fn try_load_policy(path: &Path) -> anyhow::Result<Policy> {
         .with_context(|| format!("failed to read policy {}", path.display()))?;
     let policy: Policy = toml_edit::de::from_str(&content)
         .with_context(|| format!("failed to parse policy {}", path.display()))?;
-    anyhow::ensure!(
-        policy
-            .settings
-            .min_confidence
-            .is_none_or(|value| (0.0..=1.0).contains(&value)),
-        "min_confidence must be between 0 and 1"
-    );
     anyhow::ensure!(
         policy
             .code_audit
@@ -215,9 +208,24 @@ suppress = true
     fn explicit_zero_confidence_is_distinct_from_default() -> anyhow::Result<()> {
         let policy: Policy = toml_edit::de::from_str("[settings]\nmin_confidence = 0.0")?;
         let config = crate::code_audit::config_from_policy(Some(&policy));
-        assert_eq!(config.confidence_threshold, 0.0);
-        assert!(crate::code_audit::config_from_policy(None).confidence_threshold > 0.0);
+        assert_eq!(config.confidence_threshold.get(), 0.0);
+        assert!(
+            crate::code_audit::config_from_policy(None)
+                .confidence_threshold
+                .get()
+                > 0.0
+        );
         Ok(())
+    }
+
+    #[test]
+    fn policy_deserialization_rejects_invalid_confidence() {
+        for value in ["nan", "inf", "-0.1", "1.1"] {
+            assert!(
+                toml_edit::de::from_str::<Policy>(&format!("[settings]\nmin_confidence = {value}"))
+                    .is_err()
+            );
+        }
     }
 
     #[test]

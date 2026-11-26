@@ -155,7 +155,7 @@ pub struct CodeAuditOpts {
 
     /// Exit non-zero if any finding has confidence >= this value (0.0–1.0).
     #[arg(long, value_name = "FLOAT")]
-    pub fail_on_confidence: Option<f32>,
+    pub fail_on_confidence: Option<cargo_anoint::code_audit::AuditThreshold>,
 
     /// Include test-only Rust items and tests, examples, and benches.
     #[arg(long)]

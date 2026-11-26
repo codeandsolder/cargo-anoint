@@ -456,12 +456,6 @@ fn run_feedback_command(opts: &cli::AnointOpts) -> Result<()> {
 }
 
 fn run_code_audit_command(opts: &cli::CodeAuditOpts) -> Result<()> {
-    if let Some(threshold) = opts.fail_on_confidence {
-        anyhow::ensure!(
-            (0.0..=1.0).contains(&threshold),
-            "--fail-on-confidence must be between 0 and 1"
-        );
-    }
     let manifest = opts.manifest_path.as_deref();
     let policy = load_policy(opts.policy.as_deref(), manifest)?;
     let mut code_audit_config = cargo_anoint::code_audit::config_from_policy(policy.as_ref());
@@ -505,6 +499,7 @@ fn run_code_audit_command(opts: &cli::CodeAuditOpts) -> Result<()> {
     }
 
     if let Some(threshold) = opts.fail_on_confidence {
+        let threshold = threshold.get();
         let gated_count = report
             .alerts
             .iter()
