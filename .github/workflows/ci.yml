@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  merge_group:
   workflow_dispatch:
 
 permissions:
@@ -34,3 +35,13 @@ jobs:
         cargo anoint --feedback
         cargo install cargo-audit --version 0.23.0 --locked
         cargo audit
+
+  merge-gate:
+    name: CI merge gate
+    if: ${{ always() }}
+    needs: [strict-rust, check]
+    uses: codeandsolder/ci-workflows/.github/workflows/merge-gate.yml@945fa80aba9612faf36918d309369316db9b13e7 # main
+    with:
+      needs-json: ${{ toJSON(needs) }}
+      expected-results: |
+        [["strict-rust", "success"], ["check", "success"]]
