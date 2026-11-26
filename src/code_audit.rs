@@ -4,6 +4,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::LazyLock;
 
 use anyhow::{Context, Result, bail};
 use regex::Regex;
@@ -17,14 +18,11 @@ const MAX_FILE_BYTES: u64 = 1024 * 1024;
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum BullshitKind {
     FakeComplexity,
-    CargoCult,
     OverEngineering,
     ArcAbuse,
     RwLockAbuse,
     SleepAbuse,
     UnwrapAbuse,
-    DynTraitAbuse,
-    CloneAbuse,
     MutexAbuse,
     TodoUnimplemented,
     RefCellAbuse,
@@ -38,14 +36,11 @@ impl BullshitKind {
     const fn label(self) -> &'static str {
         match self {
             Self::FakeComplexity => "fake complexity",
-            Self::CargoCult => "cargo cult",
             Self::OverEngineering => "over-engineering",
             Self::ArcAbuse => "Arc abuse",
             Self::RwLockAbuse => "RwLock abuse",
             Self::SleepAbuse => "sleep abuse",
             Self::UnwrapAbuse => "unwrap abuse",
-            Self::DynTraitAbuse => "dyn trait abuse",
-            Self::CloneAbuse => "clone abuse",
             Self::MutexAbuse => "mutex abuse",
             Self::TodoUnimplemented => "todo/unimplemented",
             Self::RefCellAbuse => "RefCell abuse",
@@ -64,6 +59,7 @@ pub struct BullshitAlert {
     pub severity: f32,
     pub file: PathBuf,
     pub line: usize,
+    /// One-based UTF-8 byte column.
     pub column: usize,
     pub context_snippet: String,
     pub why_bs: String,
@@ -238,9 +234,22 @@ fn scan_masked_code(
     let masked = mask_ranges(code, masks.excluded.iter().chain(&masks.literals).copied())?;
     let mut alerts = Vec::new();
 
-    scan_regex_patterns(&masked, file, &mut alerts)?;
-    scan_line_patterns(&masked, file, &mut alerts);
-    scan_function_complexity(&masked, file, &mut alerts);
+    let locations = LineIndex::new(&masked);
+    scan_regex_patterns(&masked, file, &locations, &mut alerts)?;
+    scan_function_complexity(&masked, file, &locations, &masks.functions, &mut alerts);
+    for &start in &masks.discarded_results {
+        alerts.push(make_alert(
+            BullshitKind::DiscardedError,
+            0.76,
+            file,
+            &masked,
+            &locations,
+            start,
+            start,
+            "Calling .ok() as a statement discards the result and can hide an error.",
+            "Propagate, handle or explicitly document the failure policy.",
+        ));
+    }
 
     alerts.retain(|alert| alert.confidence >= config.confidence_threshold);
     alerts.retain(|alert| !config.ignore_kinds.contains(&alert.kind));
@@ -499,6 +508,13 @@ fn normalize_diff_path(path: &Path) -> PathBuf {
 struct SourceMasks {
     excluded: Vec<(usize, usize)>,
     literals: Vec<(usize, usize)>,
+    functions: Vec<FunctionComplexity>,
+    discarded_results: Vec<usize>,
+}
+
+struct FunctionComplexity {
+    start: usize,
+    score: usize,
 }
 
 fn parse_ignored_ranges(code: &str, include_tests: bool) -> Result<SourceMasks> {
@@ -525,25 +541,31 @@ fn collect_ignored_ranges(
     code: &[u8],
     include_tests: bool,
     ranges: &mut SourceMasks,
-) {
+) -> usize {
     let kind = node.kind();
-
+    let span = (node.start_byte(), node.end_byte());
     if matches!(kind, "line_comment" | "block_comment") {
-        ranges.excluded.push((node.start_byte(), node.end_byte()));
-        return;
+        ranges.excluded.push(span);
+        return 0;
     }
     if matches!(
         kind,
         "string_literal" | "raw_string_literal" | "char_literal"
     ) {
-        ranges.literals.push((node.start_byte(), node.end_byte()));
-        return;
+        ranges.literals.push(span);
+        return 0;
     }
 
-    // Attributes and comments preceding an item are siblings in the grammar.
-    // Only skip an item when a test-only attribute actually applies to it.
+    if kind == "expression_statement"
+        && node
+            .named_child(0)
+            .is_some_and(|expr| method_name(expr, code) == Some("ok"))
+    {
+        ranges.discarded_results.push(node.start_byte());
+    }
+    let mut score = decision_weight(node, code);
+    let mut cursor = node.walk();
     if !include_tests && matches!(kind, "source_file" | "declaration_list" | "block") {
-        let mut cursor = node.walk();
         let mut test_only = false;
         for child in node.named_children(&mut cursor) {
             match child.kind() {
@@ -558,16 +580,47 @@ fn collect_ignored_ranges(
                     ranges.excluded.push((child.start_byte(), child.end_byte()));
                     test_only = false;
                 }
-                _ => collect_ignored_ranges(child, code, include_tests, ranges),
+                _ => score += collect_ignored_ranges(child, code, include_tests, ranges),
             }
         }
-        return;
+    } else {
+        for child in node.named_children(&mut cursor) {
+            score += collect_ignored_ranges(child, code, include_tests, ranges);
+        }
     }
+    if kind == "function_item" {
+        ranges.functions.push(FunctionComplexity {
+            start: node.start_byte(),
+            score,
+        });
+        // Nested functions are independent units, not part of their parent's score.
+        0
+    } else {
+        score
+    }
+}
 
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect_ignored_ranges(child, code, include_tests, ranges);
+fn decision_weight(node: Node<'_>, code: &[u8]) -> usize {
+    match node.kind() {
+        "if_expression" | "match_arm" | "for_expression" | "while_expression"
+        | "loop_expression" | "try_expression" | "let_condition" => 1,
+        "binary_expression" => usize::from(
+            node.child_by_field_name("operator")
+                .and_then(|op| op.utf8_text(code).ok())
+                .is_some_and(|op| matches!(op, "&&" | "||")),
+        ),
+        "call_expression" => {
+            usize::from(matches!(method_name(node, code), Some("unwrap" | "expect"))) * 2
+        }
+        _ => 0,
     }
+}
+
+fn method_name<'a>(node: Node<'_>, code: &'a [u8]) -> Option<&'a str> {
+    node.child_by_field_name("function")
+        .filter(|function| function.kind() == "field_expression")
+        .and_then(|function| function.child_by_field_name("field"))
+        .and_then(|field| field.utf8_text(code).ok())
 }
 
 fn is_test_attr(node: Node<'_>, code: &[u8]) -> bool {
@@ -596,31 +649,39 @@ fn mask_ranges(code: &str, ranges: impl IntoIterator<Item = (usize, usize)>) -> 
     String::from_utf8(bytes).context("source masking produced invalid UTF-8")
 }
 
-fn scan_regex_patterns(code: &str, file: &Path, alerts: &mut Vec<BullshitAlert>) -> Result<()> {
+struct RegexRule {
+    regex: Regex,
+    kind: BullshitKind,
+    confidence: f32,
+    why: &'static str,
+    suggestion: &'static str,
+}
+
+fn compile_regex_rules() -> Result<Vec<RegexRule>, regex::Error> {
     let patterns = [
         (
-            r"Arc\s*<\s*RwLock\s*<",
+            r"\bArc\s*<\s*(?:\w+::)*RwLock\s*<",
             BullshitKind::OverEngineering,
             0.86,
             "Arc<RwLock<...>> is often shared mutable state wearing a tuxedo.",
             "Try explicit ownership, message passing, or a narrower shared state boundary.",
         ),
         (
-            r"Arc\s*<\s*Mutex\s*<",
+            r"\bArc\s*<\s*(?:\w+::)*Mutex\s*<",
             BullshitKind::OverEngineering,
             0.82,
             "Arc<Mutex<...>> can be valid, but it is also a classic complexity magnet.",
             "Check whether ownership can stay local or the locked data can be smaller.",
         ),
         (
-            r"Mutex\s*<\s*HashMap\s*<",
+            r"\bMutex\s*<\s*(?:\w+::)*HashMap\s*<",
             BullshitKind::MutexAbuse,
             0.76,
             "A Mutex<HashMap<...>> is a blunt concurrency primitive.",
             "Consider sharding, DashMap, or reducing shared mutable state.",
         ),
         (
-            r"RwLock\s*<",
+            r"\bRwLock\s*<",
             BullshitKind::RwLockAbuse,
             0.64,
             "RwLock adds coordination cost and can hide unclear ownership.",
@@ -634,21 +695,49 @@ fn scan_regex_patterns(code: &str, file: &Path, alerts: &mut Vec<BullshitAlert>)
             "Replace sleeps with explicit readiness, timeouts, retries, or test clocks.",
         ),
         (
-            r"Arc\s*<\s*(String|Vec\s*<|Box\s*<)",
+            r"\bArc\s*<\s*(?:\w+::)*(?:String\b|Vec\s*<|Box\s*<)",
             BullshitKind::ArcAbuse,
             0.62,
             "Arc<String>, Arc<Vec<...>>, or Arc<Box<...>> wraps a value type in shared ownership — often unnecessary.",
             "Use Arc<str> instead of Arc<String>, or reconsider whether sharing is needed at all.",
         ),
         (
-            r"\b(todo|unimplemented)\s*!\s*\(",
+            r"\b(todo|unimplemented)\s*!\s*[(\[{]",
             BullshitKind::TodoUnimplemented,
             0.75,
             "todo!() or unimplemented!() will panic at runtime if reached in production.",
             "Return a Result or Option instead; replace the placeholder with a real implementation or a meaningful error.",
         ),
         (
-            r"RefCell\s*<",
+            r"\.\s*(?:unwrap|expect)\s*\(",
+            BullshitKind::UnwrapAbuse,
+            0.72,
+            "unwrap or expect may panic at runtime.",
+            "Propagate with ?, handle None/Err explicitly, or encode the invariant in the type.",
+        ),
+        (
+            r"(?:==|!=)\s*(?:true|false)\b",
+            BullshitKind::BoolComparison,
+            0.68,
+            "Comparing a boolean expression to a boolean literal can be redundant.",
+            "Use the expression or its negation when both operands are booleans.",
+        ),
+        (
+            r"\.\s*(?:to_string|to_owned)\s*\(\s*\)\s*\.\s*as_str\s*\(",
+            BullshitKind::StringAntiPattern,
+            0.74,
+            "An owned string is immediately borrowed; check whether the allocation is necessary.",
+            "Borrow an existing string or pass a &str directly when possible.",
+        ),
+        (
+            r"\bfrom_utf8_lossy\s*\(",
+            BullshitKind::LossyUtf8,
+            0.70,
+            "Lossy UTF-8 conversion replaces invalid bytes. Verify that loss is intentional.",
+            "Use checked UTF-8 conversion or raw bytes when exact preservation is required.",
+        ),
+        (
+            r"\bRefCell\s*<",
             BullshitKind::RefCellAbuse,
             0.60,
             "RefCell<T> defers borrow checking to runtime — a panic will occur if borrow rules are violated.",
@@ -656,267 +745,66 @@ fn scan_regex_patterns(code: &str, file: &Path, alerts: &mut Vec<BullshitAlert>)
         ),
     ];
 
-    for (pattern, kind, confidence, why, suggestion) in patterns {
-        let regex = Regex::new(pattern)?;
-        for mat in regex.find_iter(code) {
-            alerts.push(make_alert(
+    patterns
+        .into_iter()
+        .map(|(pattern, kind, confidence, why, suggestion)| {
+            Ok(RegexRule {
+                regex: Regex::new(pattern)?,
                 kind,
                 confidence,
-                file,
-                code,
-                mat.start(),
-                mat.end(),
                 why,
                 suggestion,
+            })
+        })
+        .collect()
+}
+
+fn scan_regex_patterns(
+    code: &str,
+    file: &Path,
+    locations: &LineIndex,
+    alerts: &mut Vec<BullshitAlert>,
+) -> Result<()> {
+    static RULES: LazyLock<Result<Vec<RegexRule>, regex::Error>> =
+        LazyLock::new(compile_regex_rules);
+    let rules = RULES
+        .as_ref()
+        .map_err(|error| anyhow::anyhow!("invalid audit regex: {error}"))?;
+    for rule in rules {
+        for mat in rule.regex.find_iter(code) {
+            alerts.push(make_alert(
+                rule.kind,
+                rule.confidence,
+                file,
+                code,
+                locations,
+                mat.start(),
+                mat.end(),
+                rule.why,
+                rule.suggestion,
             ));
         }
     }
-
     Ok(())
 }
 
-fn scan_line_patterns(code: &str, file: &Path, alerts: &mut Vec<BullshitAlert>) {
-    for (line_idx, line) in code.lines().enumerate() {
-        let trimmed = line.trim();
-
-        if let Some(col) = line.find(".unwrap()") {
-            alerts.push(alert_from_line(
-                BullshitKind::UnwrapAbuse,
-                0.72,
-                file,
-                line_idx + 1,
-                col + 1,
-                line,
-                "unwrap() is a runtime trap dressed up as confidence.",
-                "Propagate with ?, handle None/Err explicitly, or encode the invariant in the type.",
-            ));
-        }
-
-        let clone_count = line.matches(".clone()").count();
-        if clone_count >= 2 {
-            alerts.push(alert_from_line(
-                BullshitKind::CloneAbuse,
-                f32::from(u8::try_from(clone_count).unwrap_or(u8::MAX))
-                    .mul_add(0.08, 0.60)
-                    .min(0.92),
-                file,
-                line_idx + 1,
-                line.find(".clone()").unwrap_or(0) + 1,
-                line,
-                "Multiple clone() calls on one line can hide ownership confusion.",
-                "Check whether borrowing, moving, or restructuring removes the copies.",
-            ));
-        }
-
-        let dyn_count = trimmed.matches("dyn ").count();
-        if dyn_count >= 3 {
-            alerts.push(alert_from_line(
-                BullshitKind::DynTraitAbuse,
-                0.80,
-                file,
-                line_idx + 1,
-                line.find("dyn ").unwrap_or(0) + 1,
-                line,
-                "Heavy dyn usage may be abstraction theater.",
-                "Prefer concrete types or generics unless runtime polymorphism is needed.",
-            ));
-        }
-
-        if trimmed.starts_with("use std::collections::{")
-            && trimmed.contains("HashMap")
-            && trimmed.contains("BTreeMap")
-        {
-            alerts.push(alert_from_line(
-                BullshitKind::CargoCult,
-                0.62,
-                file,
-                line_idx + 1,
-                line.find("HashMap").unwrap_or(0) + 1,
-                line,
-                "Broad collection imports can signal cargo-cult scaffolding.",
-                "Import the collection you actually use, or qualify rare uses inline.",
-            ));
-        }
-
-        if line.contains("== true")
-            || line.contains("== false")
-            || line.contains("!= true")
-            || line.contains("!= false")
-        {
-            let col = line
-                .find("== true")
-                .or_else(|| line.find("== false"))
-                .or_else(|| line.find("!= true"))
-                .or_else(|| line.find("!= false"))
-                .unwrap_or(0)
-                + 1;
-            alerts.push(alert_from_line(
-                BullshitKind::BoolComparison,
-                0.68,
-                file,
-                line_idx + 1,
-                col,
-                line,
-                "Comparing a boolean expression to `true` or `false` is redundant.",
-                "Use the expression directly (`if x`) or its negation (`if !x`) instead of `== true` / `== false`.",
-            ));
-        }
-
-        if line.contains(".to_string().as_str()") || line.contains(".to_owned().as_str()") {
-            let col = line
-                .find(".to_string().as_str()")
-                .or_else(|| line.find(".to_owned().as_str()"))
-                .unwrap_or(0)
-                + 1;
-            alerts.push(alert_from_line(
-                BullshitKind::StringAntiPattern,
-                0.74,
-                file,
-                line_idx + 1,
-                col,
-                line,
-                "Converting to String then immediately borrowing as &str creates an unnecessary temporary.",
-                "Use `.as_str()` on an existing String, or pass a `&str` directly without allocating.",
-            ));
-        }
-
-        scan_discarded_errors_and_lossy_utf8(line_idx, line, file, alerts);
-    }
-}
-
-fn scan_discarded_errors_and_lossy_utf8(
-    line_idx: usize,
-    line: &str,
+fn scan_function_complexity(
+    code: &str,
     file: &Path,
+    locations: &LineIndex,
+    functions: &[FunctionComplexity],
     alerts: &mut Vec<BullshitAlert>,
 ) {
-    // .ok() used as a statement silently discards an error
-    if line.trim_end().ends_with(".ok();") || line.contains(").ok();") {
-        let col = line.find(".ok()").unwrap_or(0) + 1;
-        alerts.push(alert_from_line(
-            BullshitKind::DiscardedError,
-            0.76,
-            file,
-            line_idx + 1,
-            col,
-            line,
-            "Calling `.ok()` as a statement silently discards the error variant.",
-            "Propagate with `?`, handle the `Err`, or at minimum log before discarding.",
+    for function in functions.iter().filter(|function| function.score >= 6) {
+        let confidence =
+            (f32::from(u8::try_from(function.score).unwrap_or(u8::MAX)) / 24.0).clamp(0.66, 0.95);
+        alerts.push(make_alert(
+            BullshitKind::FakeComplexity, confidence, file, code, locations,
+            function.start, function.start,
+            &format!("Function syntactic decision score is {}; review whether its complexity is necessary.", function.score),
+            "Split the function around decisions, loops, and side effects when it improves clarity.",
         ));
     }
-
-    // let _ = discards the return value (often a Result)
-    let trimmed_start = line.trim_start();
-    if trimmed_start.starts_with("let _ =")
-        && !trimmed_start.starts_with("let _ = ()")
-        && trimmed_start.contains('(')
-    {
-        let col = line.find("let _ =").unwrap_or(0) + 1;
-        alerts.push(alert_from_line(
-                BullshitKind::DiscardedError,
-                0.65,
-                file,
-                line_idx + 1,
-                col,
-                line,
-                "`let _ = expr` silently ignores the return value — likely a discarded Result or error.",
-                "Handle the value explicitly, use `drop()` with a comment explaining why, or propagate.",
-            ));
-    }
-
-    if line.contains("from_utf8_lossy(") {
-        let col = line.find("from_utf8_lossy(").unwrap_or(0) + 1;
-        alerts.push(alert_from_line(
-                BullshitKind::LossyUtf8,
-                0.70,
-                file,
-                line_idx + 1,
-                col,
-                line,
-                "`from_utf8_lossy` silently replaces invalid UTF-8 bytes with U+FFFD, corrupting binary data.",
-                "Use `from_utf8` and handle the error, or work with raw bytes via `OsStr` / `io::Write::write_all`.",
-            ));
-    }
-}
-
-fn scan_function_complexity(code: &str, file: &Path, alerts: &mut Vec<BullshitAlert>) {
-    let lines: Vec<&str> = code.lines().collect();
-    let mut idx = 0;
-
-    while idx < lines.len() {
-        let line = lines[idx];
-        if !looks_like_fn_start(line) {
-            idx += 1;
-            continue;
-        }
-
-        let start_line = idx + 1;
-        let mut brace_balance = 0isize;
-        let mut saw_body = false;
-        let mut complexity = 0usize;
-        let mut end_idx = idx;
-
-        while end_idx < lines.len() {
-            let current = lines[end_idx];
-            complexity += line_complexity(current);
-            for ch in current.chars() {
-                if ch == '{' {
-                    saw_body = true;
-                    brace_balance += 1;
-                } else if ch == '}' {
-                    brace_balance -= 1;
-                }
-            }
-            if saw_body && brace_balance <= 0 {
-                break;
-            }
-            end_idx += 1;
-        }
-
-        if saw_body && complexity >= 6 {
-            let confidence =
-                (f32::from(u8::try_from(complexity).unwrap_or(u8::MAX)) / 24.0).clamp(0.66, 0.95);
-            alerts.push(alert_from_line(
-                BullshitKind::FakeComplexity,
-                confidence,
-                file,
-                start_line,
-                line.find("fn").unwrap_or(0) + 1,
-                line,
-                &format!(
-                    "Function complexity score is {complexity}; this smells like fake complexity."
-                ),
-                "Split the function around decisions, loops, and side effects.",
-            ));
-        }
-
-        idx = end_idx.saturating_add(1);
-    }
-}
-
-fn looks_like_fn_start(line: &str) -> bool {
-    let trimmed = line.trim_start();
-    trimmed.starts_with("fn ")
-        || trimmed.starts_with("pub fn ")
-        || trimmed.starts_with("pub(crate) fn ")
-        || trimmed.starts_with("async fn ")
-        || trimmed.starts_with("pub async fn ")
-}
-
-fn line_complexity(line: &str) -> usize {
-    let mut score = 0;
-    let trimmed = line.trim_start();
-    for token in [
-        "if ", "if(", "match ", "for ", "while ", "loop ", "&&", "||",
-    ] {
-        score += line.matches(token).count();
-    }
-    if trimmed.starts_with("if(") {
-        score += 1;
-    }
-    score += line.matches("?;").count();
-    score += line.matches(".unwrap()").count() * 2;
-    score
 }
 
 #[expect(
@@ -928,12 +816,13 @@ fn make_alert(
     confidence: f32,
     file: &Path,
     code: &str,
+    locations: &LineIndex,
     start: usize,
     end: usize,
     why_bs: &str,
     suggestion: &str,
 ) -> BullshitAlert {
-    let (line, column) = line_column(code, start);
+    let (line, column) = locations.locate(start);
     BullshitAlert {
         kind,
         confidence,
@@ -947,50 +836,26 @@ fn make_alert(
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Diagnostic construction carries source location and explanatory text"
-)]
-fn alert_from_line(
-    kind: BullshitKind,
-    confidence: f32,
-    file: &Path,
-    line: usize,
-    column: usize,
-    context: &str,
-    why_bs: &str,
-    suggestion: &str,
-) -> BullshitAlert {
-    BullshitAlert {
-        kind,
-        confidence,
-        severity: confidence,
-        file: file.to_path_buf(),
-        line,
-        column,
-        context_snippet: context.trim().to_string(),
-        why_bs: why_bs.to_string(),
-        suggestion: suggestion.to_string(),
-    }
-}
+// Byte columns remain accurate even when non-ASCII literal bytes have been masked.
+struct LineIndex(Vec<usize>);
 
-fn line_column(code: &str, byte_pos: usize) -> (usize, usize) {
-    let mut line = 1;
-    let mut col = 1;
-
-    for (idx, ch) in code.char_indices() {
-        if idx >= byte_pos {
-            break;
-        }
-        if ch == '\n' {
-            line += 1;
-            col = 1;
-        } else {
-            col += 1;
-        }
+impl LineIndex {
+    fn new(code: &str) -> Self {
+        Self(
+            std::iter::once(0)
+                .chain(
+                    code.bytes()
+                        .enumerate()
+                        .filter_map(|(offset, byte)| (byte == b'\n').then_some(offset + 1)),
+                )
+                .collect(),
+        )
     }
 
-    (line, col)
+    fn locate(&self, offset: usize) -> (usize, usize) {
+        let line = self.0.partition_point(|start| *start <= offset);
+        (line, offset - self.0[line - 1] + 1)
+    }
 }
 
 fn snippet(code: &str, start: usize, end: usize) -> String {
@@ -1063,6 +928,67 @@ fn tangled(x: usize) -> usize {
                 .iter()
                 .any(|a| a.kind == BullshitKind::FakeComplexity)
         );
+    }
+
+    #[test]
+    fn detects_multiline_panics_and_uses_byte_columns() -> Result<()> {
+        let source = "fn f() { let x = \"ż\"; value .\n unwrap ( ); value.expect(\"msg\"); }";
+        let findings = scan_code(source, "lib.rs", &config())?;
+        let panic_findings: Vec<_> = findings
+            .iter()
+            .filter(|finding| finding.kind == BullshitKind::UnwrapAbuse)
+            .collect();
+        assert_eq!(panic_findings.len(), 2);
+        assert_eq!(panic_findings[0].line, 1);
+        assert_eq!(
+            panic_findings[0].column,
+            source.find(" .").context("fixture")? + 2
+        );
+        assert_eq!(panic_findings[1].line, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn complexity_does_not_consume_bodyless_trait_methods_or_nested_functions() -> Result<()> {
+        let source = r#"trait T { fn f(&self); }
+pub const fn simple() {
+    fn nested(x: u32) {
+        if x > 1 {} if x > 2 {} if x > 3 {}
+        if x > 4 {} if x > 5 {} if x > 6 {}
+    }
+}
+pub const fn other(x: u32) {
+    if x > 1 {} if x > 2 {} if x > 3 {}
+    if x > 4 {} if x > 5 {} if x > 6 {}
+}
+"#;
+        let findings = scan_code(source, "lib.rs", &config())?;
+        let lines: Vec<_> = findings
+            .iter()
+            .filter(|finding| finding.kind == BullshitKind::FakeComplexity)
+            .map(|finding| finding.line)
+            .collect();
+        assert_eq!(lines, vec![3, 8]);
+        Ok(())
+    }
+
+    #[test]
+    fn detects_discarded_statements_not_used_or_propagated_values() -> Result<()> {
+        let source = r#"fn f() {
+    let optional = call().ok();
+    let _ = call()?;
+    call()
+        .ok();
+    consume(call().ok());
+}"#;
+        let findings = scan_code(source, "lib.rs", &config())?;
+        let lines: Vec<_> = findings
+            .iter()
+            .filter(|finding| finding.kind == BullshitKind::DiscardedError)
+            .map(|finding| finding.line)
+            .collect();
+        assert_eq!(lines, vec![4]);
+        Ok(())
     }
 
     #[test]
