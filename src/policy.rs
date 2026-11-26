@@ -221,7 +221,7 @@ suppress = true
         let policy: Policy = toml_edit::de::from_str(toml_content).unwrap();
         assert_eq!(policy.rules.len(), 1);
         assert_eq!(policy.rules[0].pattern, "old_crate");
-        assert!(policy.ignore_packages.contains(&"ignored_dep".to_string()));
+        assert!(policy.ignore_packages.iter().any(|i| i == "ignored_dep"));
         assert!(policy.packages.get("foo").unwrap().suppress);
     }
 
