@@ -25,8 +25,8 @@ pub struct ResolvedDep {
 
 impl ResolvedDep {
     /// Whether the selected package declares this dependency in an included role.
-    #[must_use]
-    pub fn is_direct(&self) -> bool {
+    #[must_use = "Distinguishes direct and transitive dependencies"]
+    pub const fn is_direct(&self) -> bool {
         !self.direct_kinds.is_empty()
     }
 }
@@ -171,6 +171,28 @@ fn fetch_metadata_and_snapshots(
     let node_map = build_node_lookup(resolve);
     let pkg_map = build_pkg_lookup(&metadata);
 
+    let targets = select_packages(&metadata, resolve, &pkg_map, mode)?;
+
+    let mut out = Vec::with_capacity(targets.len());
+    for pkg in targets {
+        let deps = resolve_deps_for_root(&pkg.id, resolve, &pkg_map, &node_map, all_targets)?;
+        out.push(PackageResult {
+            name: pkg.name.clone(),
+            version: pkg.version.to_string(),
+            manifest_path: PathBuf::from(pkg.manifest_path.as_str()),
+            deps,
+        });
+    }
+
+    Ok(out)
+}
+
+fn select_packages<'a>(
+    metadata: &'a cargo_metadata::Metadata,
+    resolve: &Resolve,
+    pkg_map: &HashMap<&PackageId, &'a Package>,
+    mode: SnapshotMode<'_>,
+) -> Result<Vec<&'a Package>> {
     let workspace_packages_ordered: Vec<&Package> = metadata
         .workspace_members
         .iter()
@@ -244,19 +266,7 @@ fn fetch_metadata_and_snapshots(
             }
         }
     };
-
-    let mut out = Vec::with_capacity(targets.len());
-    for pkg in targets {
-        let deps = resolve_deps_for_root(&pkg.id, resolve, &pkg_map, &node_map, all_targets)?;
-        out.push(PackageResult {
-            name: pkg.name.clone(),
-            version: pkg.version.to_string(),
-            manifest_path: PathBuf::from(pkg.manifest_path.as_str()),
-            deps,
-        });
-    }
-
-    Ok(out)
+    Ok(targets)
 }
 
 /// Resolve flattened dependency list relative to `root_pkg_id`'s subtree.
