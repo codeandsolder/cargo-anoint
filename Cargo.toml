@@ -36,7 +36,7 @@ toml_edit = { version = "0.22", features = ["serde"] }
 
 # HTTP client
 wreq = { git = "https://github.com/codeandsolder/wreq-exp", rev = "aad8f97d78e40c4c9fc0ddbb0cf88af870f848ac", default-features = false, features = ["webpki-roots", "tokio-rt", "http2", "json"] }
-tokio = { version = "1.54.1", features = ["rt", "macros", "time", "sync", "fs"] }
+tokio = { version = "1.54.1", features = ["rt", "macros", "time", "fs"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
