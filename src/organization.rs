@@ -336,7 +336,7 @@ const ROLES: [DependencyKind; 3] = [
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct ProviderOrigin<'a> {
     name: &'a str,
-    version: &'a str,
+    version: &'a Version,
     source: Option<&'a str>,
 }
 
