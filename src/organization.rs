@@ -341,15 +341,18 @@ impl Capability {
     }
 
     fn pairs(&self) -> impl Iterator<Item = (&str, &str)> {
-        self.providers.iter().enumerate().flat_map(|(i, left)| {
-            self.providers[i + 1..].iter().filter_map(move |right| {
-                (!self
-                    .complementary_pairs
-                    .iter()
-                    .any(|pair| pair_matches(pair, left, right)))
-                .then_some((left.as_str(), right.as_str()))
+        self.providers
+            .iter()
+            .enumerate()
+            .flat_map(move |(i, left)| {
+                self.providers[i + 1..].iter().filter_map(move |right| {
+                    (!self
+                        .complementary_pairs
+                        .iter()
+                        .any(|pair| pair_matches(pair, left, right)))
+                    .then_some((left.as_str(), right.as_str()))
+                })
             })
-        })
     }
 
     fn selections<'a>(
