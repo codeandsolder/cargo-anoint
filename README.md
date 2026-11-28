@@ -111,6 +111,13 @@ blessed.rs updates; automatic rule commits and upstream package publication
 are disabled. Do not apply blanket migration advice without checking source,
 features and API requirements.
 
+The fleet release-age review adds source-linked native Rust replacements and
+maintained successors. These findings are advisory and manual-only: age alone
+is not a migration rule. Transitive rules identify dependencies for review at
+the owning package; usage-dependent recommendations can remain direct-only.
+Intentional benchmark competitors should be retained when they are part of the
+measurement design.
+
 The upstream code-audit and live intelligence commands remain available
 for separate use. See `cargo anoint --help` and `cargo anoint bs --help`.
 
