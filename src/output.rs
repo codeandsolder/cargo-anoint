@@ -97,11 +97,12 @@ fn use_multi_headers(packages: &[PackageSuggestionView<'_>]) -> bool {
 
 pub fn render_packages_modernization<S: BuildHasher>(
     packages: &[PackageSuggestionView<'_>],
+    workspace_suggestions: &[Suggestion],
     intel: &HashMap<String, CrateIntel, S>,
 ) {
     let all_empty = packages.iter().all(|p| p.suggestions.is_empty());
 
-    if all_empty {
+    if all_empty && workspace_suggestions.is_empty() {
         println!(
             "{}",
             "✅ Your dependencies are already blessed! Nothing to modernize.".green()
@@ -144,9 +145,11 @@ pub fn render_packages_modernization<S: BuildHasher>(
         }
     }
 
+    render_workspace_suggestions(workspace_suggestions, intel);
     let high_count = packages
         .iter()
         .flat_map(|p| p.suggestions)
+        .chain(workspace_suggestions)
         .filter(|s| matches!(s.impact, Impact::High))
         .count();
 
@@ -161,6 +164,18 @@ pub fn render_packages_modernization<S: BuildHasher>(
     );
 }
 
+fn render_workspace_suggestions<S: BuildHasher>(
+    suggestions: &[Suggestion],
+    intel: &HashMap<String, CrateIntel, S>,
+) {
+    if !suggestions.is_empty() {
+        println!("\n{}", "Workspace provider divergence (advisory)".bold());
+        for suggestion in suggestions {
+            print_suggestion_detail(suggestion, intel, &HashSet::new());
+        }
+    }
+}
+
 const fn suggestion_kind_slug(kind: SuggestionKind) -> &'static str {
     match kind {
         SuggestionKind::ModernAlternative => "modern_alternative",
@@ -168,6 +183,7 @@ const fn suggestion_kind_slug(kind: SuggestionKind) -> &'static str {
         SuggestionKind::StdReplacement => "std_replace",
         SuggestionKind::ComboWin => "combo_win",
         SuggestionKind::CapabilityOverlap => "capability_overlap",
+        SuggestionKind::AdvisoryOverlap => "advisory_overlap",
         SuggestionKind::Unmaintained => "unmaintained",
     }
 }
@@ -381,6 +397,8 @@ pub struct JsonReportUnified<'a> {
     pub cargo_anoint_version: &'a str,
     pub workspace_scan: bool,
     pub packages: Vec<JsonPackageOutput<'a>>,
+    #[serde(skip_serializing_if = "<[Suggestion]>::is_empty")]
+    pub workspace_suggestions: &'a [Suggestion],
     pub code_audit: Option<&'a CodeAuditReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hardcoded_values: Option<&'a [crate::bs_detector::BSHit]>,

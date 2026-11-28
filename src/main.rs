@@ -144,6 +144,7 @@ fn registry_names(deps: &[cargo_anoint::parser::ResolvedDep]) -> HashSet<&str> {
 
 struct DependencyScan {
     packages: Vec<PackageScan>,
+    workspace_suggestions: Vec<cargo_anoint::suggestions::Suggestion>,
     code_audit_config: cargo_anoint::code_audit::CodeAuditConfig,
     offline: bool,
 }
@@ -169,6 +170,13 @@ impl DependencyScan {
         )?;
         let rules = cargo_anoint::suggestions::load_rules()?;
 
+        let workspace_suggestions = cargo_anoint::suggestions::analyze_workspace(&snapshots)?;
+        let workspace_suggestions = match policy {
+            Some(policy) => {
+                cargo_anoint::policy::apply_workspace_policy(workspace_suggestions, policy)
+            }
+            None => workspace_suggestions,
+        };
         let mut packages = Vec::with_capacity(snapshots.len());
         for snap in snapshots {
             let raw = cargo_anoint::suggestions::analyze(
@@ -184,6 +192,7 @@ impl DependencyScan {
 
         Ok(Self {
             packages,
+            workspace_suggestions,
             code_audit_config: cargo_anoint::code_audit::config_from_policy(policy),
             offline: opts.offline || policy.is_some_and(|p| p.settings.offline),
         })
@@ -197,6 +206,7 @@ impl DependencyScan {
         self.packages
             .iter()
             .flat_map(|package| &package.suggestions)
+            .chain(&self.workspace_suggestions)
     }
 
     fn audit(&self) -> Result<cargo_anoint::code_audit::CodeAuditReport> {
@@ -256,6 +266,7 @@ impl DependencyScan {
             cargo_anoint_version: env!("CARGO_PKG_VERSION"),
             workspace_scan: opts.workspace || self.packages.len() > 1,
             packages: packages_for_json,
+            workspace_suggestions: &self.workspace_suggestions,
             code_audit: merged_audit.as_ref(),
             hardcoded_values: None,
             security_advisories: advisories_for_json,
@@ -354,7 +365,11 @@ impl DependencyScan {
             .collect();
 
         let intel = self.fetch_intel(&views).await;
-        cargo_anoint::output::render_packages_modernization(&views, &intel);
+        cargo_anoint::output::render_packages_modernization(
+            &views,
+            &self.workspace_suggestions,
+            &intel,
+        );
 
         cargo_anoint::output::render_advisories(&self.advisory_report(opts).await);
 
@@ -484,6 +499,7 @@ fn run_code_audit_command(opts: &cli::CodeAuditOpts) -> Result<()> {
             cargo_anoint_version: env!("CARGO_PKG_VERSION"),
             workspace_scan: false,
             packages: Vec::new(),
+            workspace_suggestions: &[],
             code_audit: Some(&report),
             hardcoded_values: audit.hardcoded_values.as_deref(),
             security_advisories: cargo_anoint::advisories::AdvisoryReport::Skipped,
@@ -627,7 +643,7 @@ fn run_init_ci(manifest_path: Option<&Path>) -> Result<()> {
     println!("     • Uploads code-audit findings as SARIF (GitHub code scanning / PR annotations)");
     println!();
     println!(
-        "   Tip: add fail_on = [\"high\"] to anoint.toml to enforce the gate without repeating the flag."
+        "   Tip: add fail_on = [\"High\"] to anoint.toml to enforce the gate without repeating the flag."
     );
 
     Ok(())

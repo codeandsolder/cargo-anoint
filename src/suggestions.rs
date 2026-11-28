@@ -38,13 +38,14 @@ pub enum SuggestionKind {
     ComboWin,
     /// Multiple independent providers of a curated capability.
     CapabilityOverlap,
+    /// A workload-sensitive or indirect independent-provider overlap; never a focused gate failure.
+    AdvisoryOverlap,
     /// Crate is unmaintained — switch to maintained fork/successor.
     Unmaintained,
 }
 
 /// Impact level of a suggestion.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, clap::ValueEnum)]
-#[serde(rename_all = "lowercase")]
 pub enum Impact {
     High,
     Medium,
@@ -106,7 +107,8 @@ const fn impact_for(kind: SuggestionKind) -> Impact {
         SuggestionKind::Unmaintained | SuggestionKind::StdReplacement => Impact::High,
         SuggestionKind::ModernAlternative
         | SuggestionKind::ComboWin
-        | SuggestionKind::CapabilityOverlap => Impact::Medium,
+        | SuggestionKind::CapabilityOverlap
+        | SuggestionKind::AdvisoryOverlap => Impact::Medium,
         SuggestionKind::FeatureOptimization => Impact::Low,
     }
 }
@@ -182,6 +184,15 @@ pub fn analyze(
     Ok(suggestions)
 }
 
+/// Review provider divergence across selected workspace members.
+/// # Errors
+/// Returns an error if the embedded organization policy cannot be decoded.
+pub fn analyze_workspace(
+    snapshots: &[crate::parser::PackageResult],
+) -> serde_json::Result<Vec<Suggestion>> {
+    crate::organization::analyze_workspace(snapshots)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,6 +213,98 @@ mod tests {
     }
 
     #[test]
+    fn reviewed_modernization_rules_are_unique_and_source_linked() {
+        let rules = load_rules().expect("embedded rules");
+        let mut patterns = HashSet::new();
+        for rule in &rules {
+            assert!(
+                patterns.insert(&rule.pattern),
+                "duplicate rule: {}",
+                rule.pattern
+            );
+        }
+        for name in [
+            "memoffset",
+            "fs2",
+            "array-macro",
+            "wee_alloc",
+            "proc-macro-error",
+            "proc-macro-error2",
+            "rustls-pemfile",
+            "im-rc",
+            "winapi",
+            "unsafe-libyaml",
+            "rust_socketio",
+        ] {
+            let rule = rules
+                .iter()
+                .find(|rule| rule.pattern == name)
+                .expect("reviewed rule");
+            assert!(rule.include_transitive);
+            assert!(rule.source.starts_with("https://"));
+        }
+        for name in ["proc-macro-error", "proc-macro-error2"] {
+            let rule = rules
+                .iter()
+                .find(|rule| rule.pattern == name)
+                .expect("diagnostic rule");
+            assert_eq!(rule.kind, SuggestionKind::Unmaintained);
+            assert_eq!(rule.replacement, "syn::Error / manyhow");
+        }
+    }
+
+    #[test]
+    fn modernization_advice_respects_direct_and_transitive_scope() {
+        let rules = load_rules().expect("embedded rules");
+        for is_direct in [false, true] {
+            let deps: Vec<_> = [
+                "memoffset",
+                "proc-macro-error2",
+                "version_check",
+                "natord",
+                "num-traits",
+            ]
+            .into_iter()
+            .map(|name| ResolvedDep {
+                name: name.into(),
+                version: cargo_metadata::semver::Version::new(0, 1, 0),
+                enabled_features: vec![],
+                available_features: vec![],
+                source: Some("registry".into()),
+                repository: None,
+                normal_dependencies: vec![],
+                direct_kinds: if is_direct {
+                    vec![cargo_metadata::DependencyKind::Normal]
+                } else {
+                    vec![]
+                },
+            })
+            .collect();
+            let findings = analyze(&deps, &rules, Some("consumer")).expect("embedded policy");
+            for name in ["memoffset", "proc-macro-error2"] {
+                assert!(findings.iter().any(|finding| finding.current == name
+                    && finding.package.as_deref() == Some("consumer")));
+            }
+            for name in ["version_check", "natord"] {
+                assert_eq!(
+                    findings.iter().any(|finding| finding.current == name),
+                    is_direct
+                );
+            }
+            assert!(
+                !findings
+                    .iter()
+                    .any(|finding| finding.current == "num-traits")
+            );
+            assert!(
+                findings
+                    .iter()
+                    .all(|finding| finding.kind != SuggestionKind::CapabilityOverlap)
+            );
+        }
+    }
+
+    #[test]
     fn test_analyze_single_crate_match() {
         let rules = load_rules().unwrap();
         let deps = vec![
@@ -212,7 +315,7 @@ mod tests {
                 available_features: vec![],
                 source: Some("registry".into()),
                 repository: None,
-
+                normal_dependencies: vec![],
                 direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
             ResolvedDep {
@@ -222,7 +325,7 @@ mod tests {
                 available_features: vec![],
                 source: Some("registry".into()),
                 repository: None,
-
+                normal_dependencies: vec![],
                 direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
         ];
@@ -244,7 +347,7 @@ mod tests {
                 available_features: vec![],
                 source: Some("registry".into()),
                 repository: None,
-
+                normal_dependencies: vec![],
                 direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
             ResolvedDep {
@@ -254,7 +357,7 @@ mod tests {
                 available_features: vec![],
                 source: Some("registry".into()),
                 repository: None,
-
+                normal_dependencies: vec![],
                 direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
         ];
@@ -302,7 +405,7 @@ mod tests {
             available_features: vec![],
             source: Some("registry".into()),
             repository: None,
-
+            normal_dependencies: vec![],
             direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
         }];
 
@@ -325,7 +428,7 @@ mod tests {
             available_features: vec![],
             source: Some("registry".into()),
             repository: None,
-
+            normal_dependencies: vec![],
             direct_kinds: vec![], // transitive — should be ignored
         }];
 
@@ -347,7 +450,7 @@ mod tests {
                 available_features: vec![],
                 source: Some("registry".into()),
                 repository: None,
-
+                normal_dependencies: vec![],
                 direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
             ResolvedDep {
@@ -357,7 +460,7 @@ mod tests {
                 available_features: vec![],
                 source: Some("registry".into()),
                 repository: None,
-
+                normal_dependencies: vec![],
                 direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
             ResolvedDep {
@@ -367,7 +470,7 @@ mod tests {
                 available_features: vec![],
                 source: Some("registry".into()),
                 repository: None,
-
+                normal_dependencies: vec![],
                 direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
         ];
@@ -393,7 +496,7 @@ mod tests {
                 available_features: vec![],
                 source: Some("registry".into()),
                 repository: None,
-
+                normal_dependencies: vec![],
                 direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
             ResolvedDep {
@@ -403,7 +506,7 @@ mod tests {
                 available_features: vec![],
                 source: Some("registry".into()),
                 repository: None,
-
+                normal_dependencies: vec![],
                 direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
         ];
@@ -435,7 +538,7 @@ mod tests {
             available_features: vec![],
             source: None,
             repository: None,
-
+            normal_dependencies: vec![],
             direct_kinds: vec![],
         };
         let findings = analyze(&[dep], &load_rules().expect("embedded rules"), None)

@@ -4,7 +4,8 @@
 use anyhow::{Context, Result, bail};
 use cargo_metadata::semver::Version;
 use cargo_metadata::{
-    CargoOpt, DependencyKind, MetadataCommand, Node, Package, PackageId, Resolve,
+    CargoOpt, DepKindInfo, DependencyKind, MetadataCommand, Node, NodeDep, Package, PackageId,
+    Resolve,
 };
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
@@ -22,6 +23,8 @@ pub struct ResolvedDep {
     pub source: Option<String>,
     pub repository: Option<String>,
     pub direct_kinds: Vec<DependencyKind>,
+    /// For direct packages, names of active, immediate normal dependencies.
+    pub normal_dependencies: Vec<String>,
 }
 
 impl ResolvedDep {
@@ -237,6 +240,82 @@ fn filter_workspace_members<'a>(
     Ok(matched)
 }
 
+// Cargo metadata may retain optional edges from the lockfile even when the
+// associated feature is disabled (notably weak dependency feature forwarding).
+// A strong dependency feature activates its alias; a weak `alias?/feature`
+// reference only forwards a feature if the dependency was activated elsewhere.
+fn activated_optional_aliases<'a>(package: &'a Package, node: &Node) -> HashSet<&'a str> {
+    node.features
+        .iter()
+        .filter_map(|feature| package.features.get(feature.as_str()))
+        .flatten()
+        .filter_map(|value| {
+            value.strip_prefix("dep:").or_else(|| {
+                let (alias, _) = value.split_once('/')?;
+                (!alias.ends_with('?')).then_some(alias)
+            })
+        })
+        .collect()
+}
+
+fn active_edges<'a>(
+    node: &'a Node,
+    packages: &HashMap<&PackageId, &Package>,
+) -> Vec<(&'a NodeDep, &'a DepKindInfo)> {
+    let parent = packages.get(&node.id);
+    let aliases = parent.map(|package| activated_optional_aliases(package, node));
+    node.deps
+        .iter()
+        .flat_map(|edge| {
+            let child = packages.get(&edge.pkg);
+            let aliases = aliases.as_ref();
+            edge.dep_kinds
+                .iter()
+                .filter(move |kind| {
+                    let (Some(parent), Some(child), Some(aliases)) = (parent, child, aliases)
+                    else {
+                        return true;
+                    };
+                    dependency_kind_active(parent, child, edge, kind, aliases)
+                })
+                .map(move |kind| (edge, kind))
+        })
+        .collect()
+}
+
+fn dependency_kind_active(
+    parent: &Package,
+    child: &Package,
+    edge: &NodeDep,
+    kind: &DepKindInfo,
+    aliases: &HashSet<&str>,
+) -> bool {
+    let mut matched = false;
+    for dependency in &parent.dependencies {
+        if dependency.name != child.name
+            || dependency.kind != kind.kind
+            || dependency.target != kind.target
+            || !dependency.req.matches(&child.version)
+        {
+            continue;
+        }
+        let alias = dependency.rename.as_deref().unwrap_or(&dependency.name);
+        let name_matches = alias.replace('-', "_") == edge.name
+            || (dependency.rename.is_none()
+                && child.targets.iter().any(|target| target.name == edge.name));
+        if !name_matches {
+            continue;
+        }
+        matched = true;
+        if !dependency.optional || aliases.contains(alias) {
+            return true;
+        }
+    }
+    // An edge that cannot be matched to its declaration (e.g. a future Cargo
+    // metadata representation) is retained rather than silently losing it.
+    !matched
+}
+
 /// Resolve flattened dependency list relative to `root_pkg_id`'s subtree.
 ///
 /// When `all_targets` is false (the default), only `[dependencies]` entries are treated as
@@ -253,13 +332,11 @@ fn resolve_deps_for_root(
         .ok_or_else(|| anyhow::anyhow!("Root node missing in resolve.nodes"))?;
 
     let mut direct_roles: HashMap<&PackageId, Vec<DependencyKind>> = HashMap::new();
-    for edge in &root_node.deps {
-        for kind in edge.dep_kinds.iter().map(|kind| kind.kind) {
-            if all_targets || kind == DependencyKind::Normal {
-                let roles = direct_roles.entry(&edge.pkg).or_default();
-                if !roles.contains(&kind) {
-                    roles.push(kind);
-                }
+    for (edge, kind) in active_edges(root_node, pkg_map) {
+        if all_targets || kind.kind == DependencyKind::Normal {
+            let roles = direct_roles.entry(&edge.pkg).or_default();
+            if !roles.contains(&kind.kind) {
+                roles.push(kind.kind);
             }
         }
     }
@@ -274,14 +351,10 @@ fn resolve_deps_for_root(
             .get(id)
             .ok_or_else(|| anyhow::anyhow!("Reachable dependency {id} missing from resolution"))?;
         pending.extend(
-            node.deps
-                .iter()
-                .filter(|d| {
-                    d.dep_kinds
-                        .iter()
-                        .any(|k| k.kind != DependencyKind::Development)
-                })
-                .map(|d| &d.pkg),
+            active_edges(node, pkg_map)
+                .into_iter()
+                .filter(|(_, kind)| kind.kind != DependencyKind::Development)
+                .map(|(edge, _)| &edge.pkg),
         );
     }
 
@@ -307,6 +380,27 @@ fn resolve_deps_for_root(
             available_features,
             source: pkg.source.as_ref().map(std::string::ToString::to_string),
             repository: pkg.repository.clone(),
+            normal_dependencies: if direct_roles.contains_key(&node.id) {
+                active_edges(node, pkg_map)
+                    .into_iter()
+                    .filter(|(_, kind)| kind.kind == DependencyKind::Normal)
+                    .map(|(edge, _)| {
+                        pkg_map
+                            .get(&edge.pkg)
+                            .map(|child| child.name.clone())
+                            .ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "Resolved package {} missing from metadata",
+                                    edge.pkg
+                                )
+                            })
+                    })
+                    .collect::<Result<BTreeSet<_>>>()?
+                    .into_iter()
+                    .collect()
+            } else {
+                Vec::new()
+            },
             direct_kinds: direct_roles.remove(&node.id).unwrap_or_default(),
         });
     }
@@ -322,4 +416,152 @@ fn metadata_command(manifest_path: Option<&Path>) -> MetadataCommand {
     }
 
     cmd
+}
+
+#[cfg(test)]
+mod optional_edge_tests {
+    use super::*;
+    use std::fs;
+
+    fn write_package(base: &Path, name: &str, extra: &str) -> Result<()> {
+        let path = base.join(name);
+        fs::create_dir_all(path.join("src"))?;
+        fs::write(path.join("src/lib.rs"), "")?;
+        fs::write(
+            path.join("Cargo.toml"),
+            format!(
+                "[package]\nname = {name:?}\nversion = \"0.1.0\"\nedition = \"2024\"\n{extra}\n"
+            ),
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn inactive_optional_edges_do_not_enter_dependency_snapshots() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let base = temp.path();
+        for name in [
+            "explicit-provider",
+            "strong-provider",
+            "weak-provider",
+            "implicit-provider",
+            "root-provider",
+            "required-provider",
+        ] {
+            write_package(base, name, "[features]\nflag = []")?;
+        }
+        write_package(base, "custom-provider", "[lib]\nname = \"custom_library\"")?;
+        write_package(
+            base,
+            "parent",
+            r#"
+[dependencies]
+explicit-alias = { package = "explicit-provider", path = "../explicit-provider", optional = true }
+strong-alias = { package = "strong-provider", path = "../strong-provider", optional = true }
+weak-alias = { package = "weak-provider", path = "../weak-provider", optional = true }
+implicit-alias = { package = "implicit-provider", path = "../implicit-provider", optional = true }
+custom-provider = { path = "../custom-provider", optional = true }
+required-provider = { path = "../required-provider" }
+[features]
+explicit = ["dep:explicit-alias"]
+strong = ["strong-alias/flag"]
+weak = ["weak-alias?/flag"]
+custom = ["dep:custom-provider"]
+everything = ["explicit", "strong", "weak", "weak-alias", "implicit-alias", "custom"]
+"#,
+        )?;
+        write_package(
+            base,
+            "root",
+            r#"
+[dependencies]
+parent = { path = "../parent" }
+root-provider = { path = "../root-provider", optional = true }
+[features]
+everything = ["parent/everything", "dep:root-provider"]
+"#,
+        )?;
+        let mut command = MetadataCommand::new();
+        command.manifest_path(base.join("root/Cargo.toml"));
+        command.features(CargoOpt::AllFeatures);
+        command.other_options(vec!["--offline".into()]);
+        let metadata = command.exec()?;
+        let packages = build_pkg_lookup(&metadata);
+        let mut resolve = metadata
+            .resolve
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("missing resolve"))?;
+        let root = resolve
+            .root
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("missing root"))?;
+        let all = resolve_deps_for_root(
+            &root,
+            &resolve,
+            &packages,
+            &build_node_lookup(&resolve),
+            false,
+        )?;
+        assert_eq!(all.len(), 8);
+        // Reproduce Cargo retaining edges for inactive weak-forwarded features.
+        // Keep the original resolved edge list, but use the actually enabled features.
+        for node in &mut resolve.nodes {
+            if node.id == root {
+                node.features.clear();
+            } else if packages
+                .get(&node.id)
+                .is_some_and(|package| package.name == "parent")
+            {
+                node.features.retain(|feature| {
+                    matches!(
+                        feature.as_str(),
+                        "explicit" | "strong" | "strong-alias" | "weak" | "implicit-alias"
+                    )
+                });
+            }
+        }
+        let active = resolve_deps_for_root(
+            &root,
+            &resolve,
+            &packages,
+            &build_node_lookup(&resolve),
+            false,
+        )?;
+        let names: HashSet<_> = active.iter().map(|dep| dep.name.as_str()).collect();
+        assert_eq!(
+            names,
+            HashSet::from([
+                "parent",
+                "required-provider",
+                "explicit-provider",
+                "strong-provider",
+                "implicit-provider"
+            ])
+        );
+        assert_eq!(active.iter().filter(|dep| dep.is_direct()).count(), 1);
+        let parent = active
+            .iter()
+            .find(|dep| dep.name == "parent")
+            .ok_or_else(|| anyhow::anyhow!("missing parent"))?;
+        assert_eq!(
+            parent
+                .normal_dependencies
+                .iter()
+                .map(String::as_str)
+                .collect::<HashSet<_>>(),
+            HashSet::from([
+                "required-provider",
+                "explicit-provider",
+                "strong-provider",
+                "implicit-provider"
+            ])
+        );
+        assert!(
+            active
+                .iter()
+                .filter(|dep| !dep.is_direct())
+                .all(|dep| dep.normal_dependencies.is_empty())
+        );
+        Ok(())
+    }
 }

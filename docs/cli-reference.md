@@ -49,7 +49,8 @@ Top-level fields:
 
 - **`cargo_anoint_version`**: string (`env!("CARGO_PKG_VERSION")` of the binary).
 - **`workspace_scan`**: `true` when **`--workspace`** was used or multiple members were analyzed.
-- **`packages`**: array of `{ name, version, manifest_path, dependency_suggestions }` where **`dependency_suggestions`** is the list of **`Suggestion`** structs. Impact values are lowercase; optional `condition` text states what must be reviewed before applying the recommendation.
+- **`packages`**: array of `{ name, version, manifest_path, dependency_suggestions }` where **`dependency_suggestions`** is the list of **`Suggestion`** structs. Impact values are `High`, `Medium`, or `Low` (the same names are used in TOML `fail_on`; CLI flags use lowercase); optional `condition` text states what must be reviewed before applying the recommendation.
+- **`workspace_suggestions`**: advisory provider divergence across selected workspace members, omitted when empty.
 - **`code_audit`**: `null` unless **`--audit-code`** (bless) populated the merged report, or **`cargo anoint bs --json`** with code-audit output.
 - **`security_advisories`**: object with `status` (`skipped`, `complete`, or `unavailable`). Complete reports include `checked` and `findings` with exact crates.io versions; unavailable reports include an error.
 

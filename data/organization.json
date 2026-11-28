@@ -165,15 +165,6 @@
       ]
     },
     {
-      "repository": "fontations",
-      "packages": [
-        "font-types",
-        "read-fonts",
-        "skrifa",
-        "write-fonts"
-      ]
-    },
-    {
       "repository": "i-love-proland",
       "packages": [
         "i-love-proland"
@@ -197,7 +188,13 @@
         "isahc"
       ],
       "preferred": "wreq from https://github.com/codeandsolder/wreq-exp",
-      "notes": "Check async/runtime, target, proxy, TLS and streaming requirements; consolidate independent HTTP clients where possible."
+      "notes": "Check async/runtime, target, proxy, TLS and streaming requirements; consolidate independent HTTP clients where possible.",
+      "wrappers": [
+        {
+          "package": "lurkmoar",
+          "repository": "lurkmoar-rs"
+        }
+      ]
     },
     {
       "name": "HTTP server framework",
@@ -215,14 +212,36 @@
       "notes": "Hyper is a lower-level transport, not a competing framework."
     },
     {
-      "name": "async runtime",
+      "name": "async runtime and completion I/O",
       "providers": [
         "tokio",
         "async-std",
-        "smol"
+        "smol",
+        "compio",
+        "compio-runtime"
       ],
-      "preferred": "tokio",
-      "notes": "Check platform and feature combinations; runtime adapters may be intentional."
+      "preferred": "one general runtime unless a dedicated completion-I/O runtime is justified",
+      "notes": "Compio may supply io_uring/IOCP completion I/O while Tokio orchestrates networking and timers. Compio runtime and its facade are complementary; existing general-runtime gate remains separate. Pairs of general runtimes are evaluated by the existing focused gate.",
+      "complementary_pairs": [
+        [
+          "compio",
+          "compio-runtime"
+        ]
+      ],
+      "gate_pairs": [
+        [
+          "tokio",
+          "async-std"
+        ],
+        [
+          "tokio",
+          "smol"
+        ],
+        [
+          "async-std",
+          "smol"
+        ]
+      ]
     },
     {
       "name": "JSON implementation",
@@ -381,13 +400,22 @@
       ]
     },
     {
-      "name": "Fx hash implementation",
+      "name": "in-memory hash table hashing",
       "providers": [
         "fxhash",
-        "rustc-hash"
+        "rustc-hash",
+        "ahash",
+        "foldhash",
+        "rapidhash"
       ],
-      "preferred": "rustc-hash",
-      "notes": "fxhash is unmaintained; check deterministic hash output and iteration order when migrating."
+      "preferred": "one measured hasher per key/trust class; rustc-hash for trusted numeric keys, standard RandomState for attacker-controlled keys",
+      "notes": "FxHash, Foldhash, RapidHash and AHash have different seeding, target and collision behavior. Benchmark representative keys and hardware; preserve HashDoS protection and any required ordering. hashbrown is a collection, not an independent hash algorithm. The existing FxHash successor rule covers fxhash+rustc-hash.",
+      "gate_pairs": [
+        [
+          "fxhash",
+          "rustc-hash"
+        ]
+      ]
     },
     {
       "name": "mesh optimization and simplification",
@@ -398,6 +426,165 @@
       ],
       "preferred": "meshoptimizer-rs where the required meshlet, cluster LOD, simplification and attribute operations are supported",
       "notes": "Consolidate independent meshoptimizer implementations. Preserve attribute weights, seams, indices, error units and meshlet limits; benchmark geometry quality and throughput."
+    },
+    {
+      "name": "directory traversal",
+      "providers": [
+        "ignore",
+        "walkdir",
+        "jwalk"
+      ],
+      "preferred": "ignore for ignore-aware or parallel traversal; walkdir for explicit traversal semantics",
+      "notes": "Verify hidden files, ignore rules, symlink handling, sorting, max-open descriptors and errors. Glob matchers are not directory walkers.",
+      "gate_pairs": []
+    },
+    {
+      "name": "logging instrumentation",
+      "providers": [
+        "log",
+        "tracing"
+      ],
+      "preferred": "tracing for structured events and spans when application instrumentation can share it",
+      "notes": "Keep an explicit compatibility bridge or public log facade when needed; log and tracing are not the same as their subscribers, filters or sinks.",
+      "gate_pairs": []
+    },
+    {
+      "name": "Git implementation",
+      "providers": [
+        "git2",
+        "gix"
+      ],
+      "preferred": "gix where its operation coverage and performance meet requirements",
+      "notes": "Check fetch/push, authentication, submodules, index and worktree behavior, object formats and repository trust; do not assume parity with libgit2.",
+      "gate_pairs": []
+    },
+    {
+      "name": "calendar and wall-clock date/time",
+      "providers": [
+        "chrono",
+        "jiff",
+        "time"
+      ],
+      "preferred": "Jiff for new calendrical and time-zone handling; std::time for elapsed time",
+      "notes": "Check supported timestamp ranges, serialization, formatting, no_std, WASM and timezone semantics. Keep protocol-bound date/time types when necessary. Chrono is subject to RustSec maintenance advisory RUSTSEC-2026-0543; avoid new use.",
+      "gate_pairs": []
+    },
+    {
+      "name": "embedded persistence",
+      "providers": [
+        "redb",
+        "rusqlite",
+        "sled",
+        "heed",
+        "heed3",
+        "fjall",
+        "rocksdb",
+        "parity-db",
+        "libmdbx",
+        "jammdb",
+        "persy",
+        "surrealkv",
+        "turbokv",
+        "turso",
+        "lkv",
+        "lsm-db",
+        "manifold-db",
+        "roughdb"
+      ],
+      "preferred": "one measured engine per workload; SQLite for relational queries, redb/heed for scan-heavy KV, compare Fjall/SurrealKV/RocksDB for mixed or write-heavy KV",
+      "notes": "These engines are not drop-in substitutes. Compare transactions, durability, SQL/range queries, write amplification, latency, disk usage and migration cost on representative data. Independent benchmark engines are intentional. Organization benchmark results show workload-, durability- and concurrency-dependent winners; do not infer a universal ranking.",
+      "gate_pairs": []
+    },
+    {
+      "name": "Argon2 implementation",
+      "providers": [
+        "argon2",
+        "argon2-rust",
+        "rust-argon2"
+      ],
+      "preferred": "RustCrypto argon2 for password-hash trait interoperability; benchmark argon2-rust for compatible raw/parallel workloads",
+      "notes": "Preserve algorithm, version, memory/time/parallelism parameters, PHC format, zeroization, and constant-time verification. Independent conformance or differential reference implementations are intentional.",
+      "gate_pairs": []
+    },
+    {
+      "name": "STEP Part 21 decoding",
+      "providers": [
+        "step-p21",
+        "ruststep",
+        "cadmpeg-codec-step",
+        "cadmpeg-step"
+      ],
+      "preferred": "step-p21 from codeandsolder/step-p21-fast for the existing native AST/entity pipeline; compare full codec coverage before replacing",
+      "notes": "Cadmpeg supplies a different CAD IR and codec path. Validate topology, geometry, assemblies and loss reporting on the corpus. Independent differential readers are intentional.",
+      "gate_pairs": []
+    },
+    {
+      "name": "glob pattern matching",
+      "providers": [
+        "glob",
+        "globset",
+        "wax",
+        "fast-glob",
+        "glob-match"
+      ],
+      "preferred": "one matcher for the required glob syntax and path semantics",
+      "notes": "Glob walking and pattern matching are different capabilities. Check literal separators, recursive globstar, character classes, escaping, non-UTF-8 paths, case and multi-pattern matching; do not treat Git ignore as a simple filename glob.",
+      "gate_pairs": []
+    },
+    {
+      "name": "shell argument parsing and quoting",
+      "providers": [
+        "shlex",
+        "shell-words",
+        "shellwords",
+        "brush-parser",
+        "shellish_parse"
+      ],
+      "preferred": "reuse one parser for literal shell argv operations when semantics fit; preserve full shell AST parsing where required",
+      "notes": "A shell lexer/quoting library is not a full command grammar or evaluator. Validate empty quoted arguments, escapes, expansions, operators and argv round-trips. Distinct full AST and literal argv operations may be justified.",
+      "gate_pairs": []
+    },
+    {
+      "name": "WebSocket transport",
+      "provider_features": {
+        "wreq": [
+          "ws"
+        ]
+      },
+      "providers": [
+        "wreq",
+        "tokio-tungstenite",
+        "async-tungstenite",
+        "tokio-websockets",
+        "fastwebsockets",
+        "soketto",
+        "websocket"
+      ],
+      "preferred": "one client transport with shared HTTP/TLS where supported, and a separate server implementation only when necessary",
+      "notes": "Wreq provides a WebSocket client only with its ws feature; client/server roles and handshake, control frames, limits and TLS capabilities matter. A direct server test dependency can be legitimate.",
+      "gate_pairs": []
+    },
+    {
+      "name": "Unix syscall wrappers",
+      "providers": [
+        "nix",
+        "rustix"
+      ],
+      "preferred": "one wrapper for supported safe syscall APIs where complete operation coverage permits",
+      "notes": "Nix provides additional user/group lookup and system APIs; Rustix may already be transitive. Do not equate distinct syscall subsets or count libc as an independent safe wrapper.",
+      "gate_pairs": []
+    },
+    {
+      "name": "text diff implementation",
+      "providers": [
+        "similar",
+        "diff",
+        "diffy",
+        "imara-diff"
+      ],
+      "preferred": "one diff implementation for required edit script and patch semantics",
+      "notes": "Check algorithm, line/byte units, whitespace, context, patch application and worst-case behavior. Diff computation and patch application can be complementary.",
+      "gate_pairs": []
     }
   ],
   "preferences": [
