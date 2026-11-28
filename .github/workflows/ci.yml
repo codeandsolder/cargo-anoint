@@ -17,14 +17,14 @@ concurrency:
 
 jobs:
   strict-rust:
-    uses: codeandsolder/rust-skills2/.github/workflows/strict-rust.yml@7d0552029497cf094787c3593f804d5bce137c4b # main
+    uses: codeandsolder/rust-skills2/.github/workflows/strict-rust.yml@4f29271a2aa27bef1f34bd70407b0db3d39904a9 # main
     with:
       rust-toolchain: nightly-2026-11-23
       cargo-args: "--locked --workspace --all-targets"
       apt-packages: "clang libclang-dev cmake"
       allow-test-panics: true
   check:
-    uses: codeandsolder/ci-workflows/.github/workflows/rust-sccache.yml@f79aef2a560a2c1c0f06f3c657f690f778040156 # main
+    uses: codeandsolder/ci-workflows/.github/workflows/rust-sccache.yml@5991b873ab28ec8fae36c2c8ef944a3f67f5f9b3 # main
     with:
       test-impact-mode: none
       command: |
@@ -40,7 +40,7 @@ jobs:
     name: CI merge gate
     if: ${{ always() }}
     needs: [strict-rust, check]
-    uses: codeandsolder/ci-workflows/.github/workflows/merge-gate.yml@945fa80aba9612faf36918d309369316db9b13e7 # main
+    uses: codeandsolder/ci-workflows/.github/workflows/merge-gate.yml@5991b873ab28ec8fae36c2c8ef944a3f67f5f9b3 # main
     with:
       needs-json: ${{ toJSON(needs) }}
       expected-results: |
