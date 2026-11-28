@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   check:
-    uses: codeandsolder/ci-workflows/.github/workflows/rust-sccache.yml@db22785ec97c653cf0ec96b6964ded8158436f3c # main
+    uses: codeandsolder/ci-workflows/.github/workflows/rust-sccache.yml@4dc75c98d3f12d3b5417e1cf9656e5f239a53c35 # main
     with:
       rust-toolchain: nightly-2026-11-23
       apt-packages: clang libclang-dev cmake
@@ -38,7 +38,7 @@ jobs:
     name: CI merge gate
     if: ${{ always() }}
     needs: [check]
-    uses: codeandsolder/ci-workflows/.github/workflows/merge-gate.yml@db22785ec97c653cf0ec96b6964ded8158436f3c # main
+    uses: codeandsolder/ci-workflows/.github/workflows/merge-gate.yml@4dc75c98d3f12d3b5417e1cf9656e5f239a53c35 # main
     with:
       needs-json: ${{ toJSON(needs) }}
       expected-results: |
