@@ -7,7 +7,7 @@
 | Module | Role |
 |--------|------|
 | `parser` | `cargo_metadata` — resolved dependency tree, direct vs transitive, features |
-| `suggestions` | Embedded `data/suggestions.json` rules (50 patterns); optionally augmented by fresh blessed-rs cache (**local patterns override cache**). Match deps and output `Suggestion` values |
+| `suggestions` | Embedded version-controlled `data/suggestions.json` rules. Match direct and explicitly opted-in transitive dependencies; output advisory `Suggestion` values. Live caches cannot change CI policy. |
 | `policy` | Optional `anoint.toml` — ignore packages, limits, code-audit filters |
 | `intel` | Optional crates.io + GitHub metadata (cached under `~/.cache/cargo-anoint/`); skipped when `--offline` or `[settings].offline` |
 | `advisories` | Optional osv.dev batch advisory lookup for exact resolved direct-dependency versions; skipped when `--offline` or `--no-advisories`; non-fatal |
