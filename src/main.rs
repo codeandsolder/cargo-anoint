@@ -858,6 +858,7 @@ mod registry_tests {
             source: source.map(str::to_owned),
             repository: None,
             direct_kinds: Vec::new(),
+            normal_dependencies: Vec::new(),
         }
     }
 
