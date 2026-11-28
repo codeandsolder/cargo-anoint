@@ -165,15 +165,6 @@
       ]
     },
     {
-      "repository": "fontations",
-      "packages": [
-        "font-types",
-        "read-fonts",
-        "skrifa",
-        "write-fonts"
-      ]
-    },
-    {
       "repository": "i-love-proland",
       "packages": [
         "i-love-proland"
