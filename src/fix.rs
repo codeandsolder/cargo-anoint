@@ -412,7 +412,8 @@ mod tests {
                 SuggestionKind::Unmaintained | SuggestionKind::StdReplacement => Impact::High,
                 SuggestionKind::ModernAlternative
                 | SuggestionKind::ComboWin
-                | SuggestionKind::CapabilityOverlap => Impact::Medium,
+                | SuggestionKind::CapabilityOverlap
+                | SuggestionKind::AdvisoryOverlap => Impact::Medium,
                 SuggestionKind::FeatureOptimization => Impact::Low,
             },
             confidence: Confidence::High,
@@ -420,7 +421,8 @@ mod tests {
             autofix_safety: match kind {
                 SuggestionKind::ModernAlternative
                 | SuggestionKind::ComboWin
-                | SuggestionKind::CapabilityOverlap => AutofixSafety::ManualOnly,
+                | SuggestionKind::CapabilityOverlap
+                | SuggestionKind::AdvisoryOverlap => AutofixSafety::ManualOnly,
                 _ => AutofixSafety::CargoTomlOnly,
             },
             evidence_source: EvidenceSource::Heuristic,
