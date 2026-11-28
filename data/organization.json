@@ -517,6 +517,72 @@
       "preferred": "step-p21 from codeandsolder/step-p21-fast for the existing native AST/entity pipeline; compare full codec coverage before replacing",
       "notes": "Cadmpeg supplies a different CAD IR and codec path. Validate topology, geometry, assemblies and loss reporting on the corpus. Independent differential readers are intentional.",
       "gate_pairs": []
+    },
+    {
+      "name": "glob pattern matching",
+      "providers": [
+        "glob",
+        "globset",
+        "wax",
+        "fast-glob",
+        "glob-match"
+      ],
+      "preferred": "one matcher for the required glob syntax and path semantics",
+      "notes": "Glob walking and pattern matching are different capabilities. Check literal separators, recursive globstar, character classes, escaping, non-UTF-8 paths, case and multi-pattern matching; do not treat Git ignore as a simple filename glob.",
+      "gate_pairs": []
+    },
+    {
+      "name": "shell argument parsing and quoting",
+      "providers": [
+        "shlex",
+        "shell-words",
+        "shellwords",
+        "brush-parser",
+        "shellish_parse"
+      ],
+      "preferred": "reuse one parser for literal shell argv operations when semantics fit; preserve full shell AST parsing where required",
+      "notes": "A shell lexer/quoting library is not a full command grammar or evaluator. Validate empty quoted arguments, escapes, expansions, operators and argv round-trips. Distinct full AST and literal argv operations may be justified.",
+      "gate_pairs": []
+    },
+    {
+      "name": "WebSocket transport",
+      "provider_features": {
+        "wreq": ["ws"]
+      },
+      "providers": [
+        "wreq",
+        "tokio-tungstenite",
+        "async-tungstenite",
+        "tokio-websockets",
+        "fastwebsockets",
+        "soketto",
+        "websocket"
+      ],
+      "preferred": "one client transport with shared HTTP/TLS where supported, and a separate server implementation only when necessary",
+      "notes": "Wreq provides a WebSocket client only with its ws feature; client/server roles and handshake, control frames, limits and TLS capabilities matter. A direct server test dependency can be legitimate.",
+      "gate_pairs": []
+    },
+    {
+      "name": "Unix syscall wrappers",
+      "providers": [
+        "nix",
+        "rustix"
+      ],
+      "preferred": "one wrapper for supported safe syscall APIs where complete operation coverage permits",
+      "notes": "Nix provides additional user/group lookup and system APIs; Rustix may already be transitive. Do not equate distinct syscall subsets or count libc as an independent safe wrapper.",
+      "gate_pairs": []
+    },
+    {
+      "name": "text diff implementation",
+      "providers": [
+        "similar",
+        "diff",
+        "diffy",
+        "imara-diff"
+      ],
+      "preferred": "one diff implementation for required edit script and patch semantics",
+      "notes": "Check algorithm, line/byte units, whitespace, context, patch application and worst-case behavior. Diff computation and patch application can be complementary.",
+      "gate_pairs": []
     }
   ],
   "preferences": [
