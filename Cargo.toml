@@ -40,7 +40,7 @@ cargo_metadata = "0.19"
 toml_edit = { version = "0.25", features = ["serde"] }
 
 # HTTP client
-wreq = { git = "https://github.com/codeandsolder/wreq-exp", rev = "aad8f97d78e40c4c9fc0ddbb0cf88af870f848ac", default-features = false, features = ["webpki-roots", "tokio-rt", "http2", "json"] }
+wreq = { git = "https://github.com/codeandsolder/wreq-exp", rev = "7c0668c3b3e137f233c0aaee132028ab39572dbd", default-features = false, features = ["webpki-roots", "tokio-rt", "http2", "json"] }
 tokio = { version = "1.54.1", features = ["rt", "macros", "time", "sync"] }
 
 # Serialization
