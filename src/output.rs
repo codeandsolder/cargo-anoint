@@ -1,21 +1,23 @@
 //! Output layer — renders the modernization report to the terminal
 //! with colored output, emojis, and actionable links.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::BuildHasher;
 use std::path::Path;
 
+use cargo_metadata::semver::Version;
 use colored::Colorize;
 use serde::Serialize;
 
 use crate::code_audit::{CodeAuditReport, kind_label};
 use crate::intel::CrateIntel;
-use crate::suggestions::{AutofixSafety, Confidence, Impact, MigrationRisk, SuggestionKind};
+use crate::suggestions::{Confidence, Impact, MigrationRisk, SuggestionKind};
 use crate::suggestions::{EvidenceSource, Suggestion};
 
 fn print_suggestion_detail<S: BuildHasher>(
     suggestion: &Suggestion,
     intel: &HashMap<String, CrateIntel, S>,
+    registry_names: &HashSet<&str>,
 ) {
     let icon = if suggestion.kind == SuggestionKind::Unmaintained {
         "⚠️"
@@ -38,10 +40,6 @@ fn print_suggestion_detail<S: BuildHasher>(
         MigrationRisk::Medium => "[MED risk]".yellow(),
         MigrationRisk::Low => "[LOW risk]".green(),
     };
-    let autofix_tag = match suggestion.autofix_safety {
-        AutofixSafety::CargoTomlOnly => "[autofix: Cargo.toml-only]".green(),
-        AutofixSafety::ManualOnly => "[autofix: manual]".dimmed(),
-    };
     let verb = match suggestion.confidence {
         Confidence::High => "→",
         Confidence::Medium | Confidence::Low => "→ consider",
@@ -53,14 +51,18 @@ fn print_suggestion_detail<S: BuildHasher>(
         suggestion.recommended.green(),
     );
     println!(
-        "   {confidence_tag} {risk_tag} {autofix_tag} {}",
-        format!("evidence: {}", evidence_label(&suggestion.evidence_source)).dimmed()
+        "   {confidence_tag} {risk_tag} {}",
+        format!("evidence: {}", evidence_label(suggestion.evidence_source)).dimmed()
     );
     println!("   {}", suggestion.reason.dimmed());
+    if let Some(condition) = &suggestion.condition {
+        println!("   Review condition: {condition}");
+    }
 
-    let crate_names: Vec<&str> = suggestion.current.split('+').collect();
-    for crate_name in crate_names {
-        if let Some(info) = intel.get(crate_name) {
+    for crate_name in suggestion.current.split('+').map(str::trim) {
+        if registry_names.contains(crate_name)
+            && let Some(info) = intel.get(crate_name)
+        {
             let mut enrichment = format!("   latest: v{}", info.latest_version);
             if let Some(recent) = info.recent_downloads {
                 enrichment.push_str(", ");
@@ -73,12 +75,14 @@ fn print_suggestion_detail<S: BuildHasher>(
 }
 
 /// One workspace member’s dependency suggestions shown in plain text reports.
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 pub struct PackageSuggestionView<'a> {
     pub name: &'a str,
-    pub version: &'a str,
+    pub version: &'a Version,
     pub manifest_path: &'a Path,
     pub suggestions: &'a [Suggestion],
+    /// Names backed exclusively by crates.io packages in this member's resolved graph.
+    pub registry_names: HashSet<&'a str>,
 }
 
 /// Render modernization output for one or many packages (`--workspace` / `--package` use multi headers).
@@ -91,31 +95,14 @@ fn use_multi_headers(packages: &[PackageSuggestionView<'_>]) -> bool {
         .is_some_and(|p| p.suggestions.iter().any(|s| s.package.is_some()))
 }
 
-/// Single-root modernization report (`manifest_path` is only useful in grouped layouts).
-pub fn render_report<S: BuildHasher>(
-    project_name: &str,
-    version: &str,
-    suggestions: &[Suggestion],
-    intel: &HashMap<String, CrateIntel, S>,
-) {
-    render_packages_modernization(
-        &[PackageSuggestionView {
-            name: project_name,
-            version,
-            manifest_path: Path::new("Cargo.toml"),
-            suggestions,
-        }],
-        intel,
-    );
-}
-
 pub fn render_packages_modernization<S: BuildHasher>(
     packages: &[PackageSuggestionView<'_>],
+    workspace_suggestions: &[Suggestion],
     intel: &HashMap<String, CrateIntel, S>,
 ) {
     let all_empty = packages.iter().all(|p| p.suggestions.is_empty());
 
-    if all_empty {
+    if all_empty && workspace_suggestions.is_empty() {
         println!(
             "{}",
             "✅ Your dependencies are already blessed! Nothing to modernize.".green()
@@ -142,7 +129,7 @@ pub fn render_packages_modernization<S: BuildHasher>(
             );
             println!();
             for suggestion in p.suggestions {
-                print_suggestion_detail(suggestion, intel);
+                print_suggestion_detail(suggestion, intel, &p.registry_names);
             }
             println!();
         }
@@ -154,13 +141,15 @@ pub fn render_packages_modernization<S: BuildHasher>(
         );
         println!();
         for suggestion in p.suggestions {
-            print_suggestion_detail(suggestion, intel);
+            print_suggestion_detail(suggestion, intel, &p.registry_names);
         }
     }
 
+    render_workspace_suggestions(workspace_suggestions, intel);
     let high_count = packages
         .iter()
         .flat_map(|p| p.suggestions)
+        .chain(workspace_suggestions)
         .filter(|s| matches!(s.impact, Impact::High))
         .count();
 
@@ -168,26 +157,26 @@ pub fn render_packages_modernization<S: BuildHasher>(
     println!(
         "{}",
         format!(
-            "{high_count} high-impact upgrade{} available. `--fix` only edits Cargo.toml (never Rust source). Run `cargo anoint --fix --dry-run` to preview.",
+            "{high_count} high-impact recommendation{} available. Review migrations before editing dependencies.",
             if high_count == 1 { "" } else { "s" }
         )
         .bold()
     );
 }
 
-pub fn render_workspace_suggestions<S: BuildHasher>(
+fn render_workspace_suggestions<S: BuildHasher>(
     suggestions: &[Suggestion],
     intel: &HashMap<String, CrateIntel, S>,
 ) {
     if !suggestions.is_empty() {
         println!("\n{}", "Workspace provider divergence (advisory)".bold());
         for suggestion in suggestions {
-            print_suggestion_detail(suggestion, intel);
+            print_suggestion_detail(suggestion, intel, &HashSet::new());
         }
     }
 }
 
-const fn suggestion_kind_slug(kind: &SuggestionKind) -> &'static str {
+const fn suggestion_kind_slug(kind: SuggestionKind) -> &'static str {
     match kind {
         SuggestionKind::ModernAlternative => "modern_alternative",
         SuggestionKind::FeatureOptimization => "feature_opt",
@@ -200,7 +189,7 @@ const fn suggestion_kind_slug(kind: &SuggestionKind) -> &'static str {
 }
 
 /// Paste-friendly condensed output (`--summary`).
-pub fn render_summary(scan_stats: &[(&str, usize, usize)], suggestions: &[Suggestion]) {
+pub fn render_summary(scan_stats: &[(&str, usize, usize)], suggestions: &[&Suggestion]) {
     const MAX: usize = 14;
     let pkg_ct = scan_stats.len();
     println!(
@@ -235,9 +224,7 @@ pub fn render_summary(scan_stats: &[(&str, usize, usize)], suggestions: &[Sugges
 
     let mut kind_counts = HashMap::<&'static str, usize>::new();
     for s in suggestions {
-        *kind_counts
-            .entry(suggestion_kind_slug(&s.kind))
-            .or_default() += 1;
+        *kind_counts.entry(suggestion_kind_slug(s.kind)).or_default() += 1;
     }
     let mut kind_pairs: Vec<_> = kind_counts.into_iter().collect();
     kind_pairs.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
@@ -270,12 +257,12 @@ pub fn render_summary(scan_stats: &[(&str, usize, usize)], suggestions: &[Sugges
     println!();
     println!(
         "{}",
-        "`--fix` changes Cargo.toml entries only — never Rust source. Check `autofix_safety` on each suggestion."
+        "All migrations require manual review; this scan does not edit manifests or Rust sources."
             .dimmed()
     );
 }
 
-const fn evidence_label(source: &EvidenceSource) -> &'static str {
+const fn evidence_label(source: EvidenceSource) -> &'static str {
     match source {
         EvidenceSource::BlessedRs => "blessed.rs",
         EvidenceSource::RustSec => "RustSec",
@@ -399,7 +386,7 @@ mod tests {
 #[derive(Serialize)]
 pub struct JsonPackageOutput<'a> {
     pub name: &'a str,
-    pub version: &'a str,
+    pub version: &'a Version,
     pub manifest_path: String,
     pub dependency_suggestions: &'a [Suggestion],
 }
@@ -415,11 +402,22 @@ pub struct JsonReportUnified<'a> {
     pub code_audit: Option<&'a CodeAuditReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hardcoded_values: Option<&'a [crate::bs_detector::BSHit]>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub security_advisories: Vec<crate::advisories::CrateAdvisories>,
+    pub security_advisories: crate::advisories::AdvisoryReport,
 }
 
-pub fn render_advisories(advisories: &[crate::advisories::CrateAdvisories]) {
+pub fn render_advisories(report: &crate::advisories::AdvisoryReport) {
+    use crate::advisories::AdvisoryReport;
+    let advisories = match report {
+        AdvisoryReport::Skipped => return,
+        AdvisoryReport::Unavailable { error } => {
+            eprintln!("OSV advisory check unavailable: {error}");
+            return;
+        }
+        AdvisoryReport::Complete { checked, findings } => {
+            println!("OSV checked {checked} direct crates.io package versions.");
+            findings
+        }
+    };
     if advisories.is_empty() {
         return;
     }
@@ -430,7 +428,9 @@ pub fn render_advisories(advisories: &[crate::advisories::CrateAdvisories]) {
         println!(
             "  {} {} {}",
             "⚠".yellow(),
-            hit.crate_name.yellow().bold(),
+            format!("{} {}", hit.crate_name, hit.version)
+                .yellow()
+                .bold(),
             format!("({count} advisory{})", if count == 1 { "" } else { "ies" }).dimmed()
         );
         for adv in &hit.advisories {
@@ -444,48 +444,23 @@ pub fn render_advisories(advisories: &[crate::advisories::CrateAdvisories]) {
         }
     }
     println!();
-    println!(
-        "{}",
-        "  Run `cargo audit` for patch guidance. Add affected crates to anoint.toml ignore_packages to suppress.".dimmed()
-    );
+    println!("{}", "  Run `cargo audit` for patch guidance.".dimmed());
 }
 
-pub fn render_unified_json(report: &JsonReportUnified<'_>) {
-    match serde_json::to_string_pretty(report) {
-        Ok(json) => println!("{json}"),
-        Err(e) => eprintln!("cargo-anoint: failed to serialize JSON output: {e}"),
-    }
+/// Write a machine-readable report to stdout.
+/// # Errors
+/// Returns serialization or output I/O errors.
+pub fn render_unified_json(report: &JsonReportUnified<'_>) -> anyhow::Result<()> {
+    write_json(report)
 }
 
-/// Legacy shape for compatibility (flat `dependency_suggestions` at top level).
-#[derive(Serialize)]
-pub struct JsonReport<'a> {
-    pub dependency_suggestions: &'a [Suggestion],
-    pub code_audit: Option<&'a CodeAuditReport>,
+fn write_json(value: &impl Serialize) -> anyhow::Result<()> {
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    serde_json::to_writer_pretty(&mut out, value)?;
+    writeln!(out)?;
+    Ok(())
 }
-
-/// Legacy narrow JSON (**`dependency_suggestions`** at top level) for crates embedding v0.1 output.
-pub fn render_json_report(suggestions: &[Suggestion], code_audit: Option<&CodeAuditReport>) {
-    let report = JsonReport {
-        dependency_suggestions: suggestions,
-        code_audit,
-    };
-    match serde_json::to_string_pretty(&report) {
-        Ok(json) => println!("{json}"),
-        Err(e) => eprintln!("cargo-anoint: failed to serialize JSON output: {e}"),
-    }
-}
-
-/// Render suggestions as a JSON array to stdout.
-/// Kept for library callers that rely on the old narrow JSON shape.
-pub fn render_json(suggestions: &[Suggestion]) {
-    match serde_json::to_string_pretty(suggestions) {
-        Ok(json) => println!("{json}"),
-        Err(e) => eprintln!("cargo-anoint: failed to serialize JSON output: {e}"),
-    }
-}
-
-// ── SARIF 2.1.0 output ───────────────────────────────────────────────────────
 
 #[derive(Serialize)]
 struct SarifRoot {
@@ -498,6 +473,8 @@ struct SarifRoot {
 #[derive(Serialize)]
 struct SarifRun {
     tool: SarifTool,
+    #[serde(rename = "originalUriBaseIds")]
+    original_uri_base_ids: BTreeMap<&'static str, SarifArtifactLocation>,
     results: Vec<SarifResult>,
 }
 
@@ -548,8 +525,8 @@ struct SarifPhysicalLocation {
 #[derive(Serialize)]
 struct SarifArtifactLocation {
     uri: String,
-    #[serde(rename = "uriBaseId")]
-    uri_base_id: &'static str,
+    #[serde(rename = "uriBaseId", skip_serializing_if = "Option::is_none")]
+    uri_base_id: Option<&'static str>,
 }
 
 #[derive(Serialize)]
@@ -563,8 +540,34 @@ struct SarifMessage {
     text: String,
 }
 
-pub fn render_sarif(report: &CodeAuditReport) {
-    use std::collections::BTreeMap;
+/// Render SARIF to stdout.
+/// # Errors
+/// Returns serialization or output I/O errors.
+pub fn render_sarif(report: &CodeAuditReport, root: &Path) -> anyhow::Result<()> {
+    write_json(&build_sarif(report, root)?)
+}
+
+fn sarif_location(path: &Path, root: &url::Url) -> anyhow::Result<SarifArtifactLocation> {
+    let absolute = url::Url::from_file_path(path).map_err(|()| {
+        anyhow::anyhow!(
+            "cannot represent source path as file URI: {}",
+            path.display()
+        )
+    })?;
+    let (uri, uri_base_id) = absolute.as_str().strip_prefix(root.as_str()).map_or_else(
+        || (absolute.to_string(), None),
+        |relative| (format!("./{relative}"), Some("%SRCROOT%")),
+    );
+    Ok(SarifArtifactLocation { uri, uri_base_id })
+}
+
+fn build_sarif(report: &CodeAuditReport, root: &Path) -> anyhow::Result<SarifRoot> {
+    let root = url::Url::from_directory_path(root).map_err(|()| {
+        anyhow::anyhow!(
+            "cannot represent source root as file URI: {}",
+            root.display()
+        )
+    })?;
 
     // Collect unique rule IDs for the driver rules table
     let mut rule_descriptions: BTreeMap<String, String> = BTreeMap::new();
@@ -587,9 +590,7 @@ pub fn render_sarif(report: &CodeAuditReport) {
         .alerts
         .iter()
         .map(|a| {
-            let file = a.file.to_string_lossy();
-            let uri = file.strip_prefix("./").unwrap_or(&file).to_string();
-            SarifResult {
+            Ok(SarifResult {
                 rule_id: format!("{:?}", a.kind),
                 level: "warning",
                 message: SarifMessage {
@@ -597,18 +598,15 @@ pub fn render_sarif(report: &CodeAuditReport) {
                 },
                 locations: vec![SarifLocation {
                     physical_location: SarifPhysicalLocation {
-                        artifact_location: SarifArtifactLocation {
-                            uri,
-                            uri_base_id: "%SRCROOT%",
-                        },
+                        artifact_location: sarif_location(&a.file, &root)?,
                         region: SarifRegion { start_line: a.line },
                     },
                 }],
-            }
+            })
         })
-        .collect();
+        .collect::<anyhow::Result<_>>()?;
 
-    let sarif = SarifRoot {
+    Ok(SarifRoot {
         version: "2.1.0",
         schema: "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
         runs: vec![SarifRun {
@@ -620,12 +618,34 @@ pub fn render_sarif(report: &CodeAuditReport) {
                     rules,
                 },
             },
+            original_uri_base_ids: BTreeMap::from([(
+                "%SRCROOT%",
+                SarifArtifactLocation {
+                    uri: root.to_string(),
+                    uri_base_id: None,
+                },
+            )]),
             results,
         }],
-    };
+    })
+}
 
-    match serde_json::to_string_pretty(&sarif) {
-        Ok(json) => println!("{json}"),
-        Err(e) => eprintln!("cargo-anoint: failed to serialize SARIF output: {e}"),
+#[cfg(test)]
+mod sarif_tests {
+    use super::*;
+
+    #[test]
+    fn artifact_locations_are_encoded_and_external_paths_are_absolute() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let root = directory.path().canonicalize()?.join("source");
+        let base =
+            url::Url::from_directory_path(&root).map_err(|()| anyhow::anyhow!("test URI"))?;
+        let local = sarif_location(&root.join("żółć #.rs"), &base)?;
+        assert_eq!(local.uri_base_id, Some("%SRCROOT%"));
+        assert_eq!(local.uri, "./%C5%BC%C3%B3%C5%82%C4%87%20%23.rs");
+        let external = sarif_location(&root.with_file_name("source-other").join("lib.rs"), &base)?;
+        assert_eq!(external.uri_base_id, None);
+        assert!(external.uri.starts_with("file:"));
+        Ok(())
     }
 }

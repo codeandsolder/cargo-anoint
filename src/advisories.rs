@@ -1,11 +1,12 @@
 //! Security advisory integration via the osv.dev batch API.
 //!
-//! Checks all direct dependencies against the OSV database (which includes
-//! `RustSec` advisories) in a single HTTP call. Non-fatal: all errors return
-//! an empty result so the main analysis always completes.
+//! Checks direct crates.io dependencies against the OSV database (which includes
+//! `RustSec` advisories) in a single HTTP call. Failures are distinguished from an empty advisory result.
 
 use std::time::Duration;
 
+use anyhow::{Context, Result, ensure};
+use cargo_metadata::semver::Version;
 use serde::{Deserialize, Serialize};
 
 const OSV_BATCH_URL: &str = "https://api.osv.dev/v1/querybatch";
@@ -37,6 +38,7 @@ impl Advisory {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CrateAdvisories {
     pub crate_name: String,
+    pub version: String,
     pub advisories: Vec<Advisory>,
 }
 
@@ -49,8 +51,7 @@ struct OsvBatchRequest {
 
 #[derive(Serialize)]
 struct OsvPackageQuery {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    version: Option<String>,
+    version: String,
     package: OsvPackage,
 }
 
@@ -62,7 +63,6 @@ struct OsvPackage {
 
 #[derive(Deserialize, Default)]
 struct OsvBatchResponse {
-    #[serde(default)]
     results: Vec<OsvResultItem>,
 }
 
@@ -81,44 +81,23 @@ struct OsvVuln {
     aliases: Vec<String>,
 }
 
-/// Fetch all historical advisories for `crate_names` in one batch request.
-///
-/// This name-only API is retained for compatibility. Call
-/// [`fetch_advisories_batch_for_versions`] when checking resolved dependencies;
-/// without versions, OSV returns advisories that may not affect the installed
-/// release.
-/// Returns only crates that have at least one advisory.
-/// All network or parse errors are swallowed — returns `[]` on failure.
-pub async fn fetch_advisories_batch(crate_names: &[&str]) -> Vec<CrateAdvisories> {
-    let queries = crate_names
-        .iter()
-        .map(|name| OsvPackageQuery {
-            version: None,
-            package: OsvPackage {
-                name: name.to_string(),
-                ecosystem: "crates.io",
-            },
-        })
-        .collect();
-
-    fetch_advisories(queries).await
-}
-
 /// Fetch advisories that affect the exact resolved crate versions.
 ///
+/// # Errors
+/// Returns an error for transport, HTTP, decoding or inconsistent response failures.
 /// Each tuple is `(crate_name, resolved_version)`. OSV uses the version to
 /// filter out historical advisories that do not affect the installed release.
 pub async fn fetch_advisories_batch_for_versions(
-    crate_versions: &[(&str, &str)],
-) -> Vec<CrateAdvisories> {
+    crate_versions: &[(&str, &Version)],
+) -> Result<Vec<CrateAdvisories>> {
     fetch_advisories(versioned_queries(crate_versions)).await
 }
 
-fn versioned_queries(crate_versions: &[(&str, &str)]) -> Vec<OsvPackageQuery> {
+fn versioned_queries(crate_versions: &[(&str, &Version)]) -> Vec<OsvPackageQuery> {
     crate_versions
         .iter()
         .map(|(name, version)| OsvPackageQuery {
-            version: Some(version.to_string()),
+            version: version.to_string(),
             package: OsvPackage {
                 name: name.to_string(),
                 ecosystem: "crates.io",
@@ -127,57 +106,74 @@ fn versioned_queries(crate_versions: &[(&str, &str)]) -> Vec<OsvPackageQuery> {
         .collect()
 }
 
-async fn fetch_advisories(queries: Vec<OsvPackageQuery>) -> Vec<CrateAdvisories> {
+async fn fetch_advisories(queries: Vec<OsvPackageQuery>) -> Result<Vec<CrateAdvisories>> {
     if queries.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-
-    let Ok(client) = wreq::Client::builder()
+    let client = wreq::Client::builder()
         .user_agent(USER_AGENT)
         .timeout(Duration::from_secs(10))
         .build()
-    else {
-        return Vec::new();
-    };
-
+        .context("build OSV client")?;
     let request = OsvBatchRequest { queries };
-
-    let Ok(response) = client
+    let response = client
         .post(OSV_BATCH_URL)
         .json(&request)
         .send()
         .await
         .and_then(wreq::Response::error_for_status)
-    else {
-        return Vec::new();
-    };
-    let Ok(batch) = response.json::<OsvBatchResponse>().await else {
-        return Vec::new();
-    };
+        .context("query OSV batch")?;
+    let batch = response
+        .json::<OsvBatchResponse>()
+        .await
+        .context("decode OSV batch")?;
+    match_results(request, batch)
+}
 
-    request
+fn match_results(
+    request: OsvBatchRequest,
+    batch: OsvBatchResponse,
+) -> Result<Vec<CrateAdvisories>> {
+    ensure!(
+        request.queries.len() == batch.results.len(),
+        "OSV returned {} results for {} queries",
+        batch.results.len(),
+        request.queries.len()
+    );
+    Ok(request
         .queries
-        .iter()
-        .zip(batch.results.iter())
+        .into_iter()
+        .zip(batch.results)
         .filter(|(_, result)| !result.vulns.is_empty())
         .map(|(query, result)| CrateAdvisories {
-            crate_name: query.package.name.clone(),
+            crate_name: query.package.name,
+            version: query.version,
             advisories: result
                 .vulns
-                .iter()
+                .into_iter()
                 .map(|v| Advisory {
-                    id: v.id.clone(),
-                    summary: v
-                        .summary
-                        .clone()
-                        .unwrap_or_else(|| "No details available.".into()),
-                    aliases: v.aliases.clone(),
+                    id: v.id,
+                    summary: v.summary.unwrap_or_else(|| "No details available.".into()),
+                    aliases: v.aliases,
                 })
                 .collect(),
         })
-        .collect()
+        .collect())
 }
 
+/// Outcome of an optional online advisory check.
+#[derive(Debug, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum AdvisoryReport {
+    Skipped,
+    Complete {
+        checked: usize,
+        findings: Vec<CrateAdvisories>,
+    },
+    Unavailable {
+        error: String,
+    },
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,7 +181,7 @@ mod tests {
     #[test]
     fn versioned_queries_serialize_the_exact_version() {
         let request = OsvBatchRequest {
-            queries: versioned_queries(&[("anyhow", "1.0.103")]),
+            queries: versioned_queries(&[("anyhow", &Version::new(1, 0, 103))]),
         };
 
         let json = serde_json::to_value(request).expect("serialize OSV request");
@@ -195,18 +191,31 @@ mod tests {
     }
 
     #[test]
-    fn compatibility_queries_omit_the_version() {
+    fn incomplete_batch_is_not_a_clean_scan() -> Result<()> {
         let request = OsvBatchRequest {
-            queries: vec![OsvPackageQuery {
-                version: None,
-                package: OsvPackage {
-                    name: "anyhow".to_string(),
-                    ecosystem: "crates.io",
-                },
-            }],
+            queries: versioned_queries(&[("anyhow", &Version::new(1, 0, 103))]),
         };
+        let response = serde_json::from_str(r#"{"results":[]}"#)?;
+        assert!(match_results(request, response).is_err());
+        Ok(())
+    }
 
-        let json = serde_json::to_value(request).expect("serialize OSV request");
-        assert!(json["queries"][0].get("version").is_none());
+    #[test]
+    fn findings_keep_the_queried_version() -> Result<()> {
+        let request = OsvBatchRequest {
+            queries: versioned_queries(&[
+                ("example", &Version::new(1, 0, 0)),
+                ("example", &Version::new(2, 0, 0)),
+            ]),
+        };
+        let response =
+            serde_json::from_str(r#"{"results":[{"vulns":[{"id":"RUSTSEC-example"}]},{}]}"#)?;
+        let findings = match_results(request, response)?;
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings.first().map(|hit| hit.version.as_str()),
+            Some("1.0.0")
+        );
+        Ok(())
     }
 }

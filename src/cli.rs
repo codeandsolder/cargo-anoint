@@ -37,14 +37,6 @@ pub enum AnointSubcommand {
     reason = "Independent CLI flags are mapped directly by clap; option compatibility is validated after parsing"
 )]
 pub struct AnointOpts {
-    /// Apply suggested changes to Cargo.toml only (`*.toml.bak` backup before write; never touches `.rs`).
-    #[arg(long)]
-    pub fix: bool,
-
-    /// With `--fix`, print the unified diff and planned actions without writing or running `cargo update`.
-    #[arg(long)]
-    pub dry_run: bool,
-
     /// Print a privacy-safe summary block suitable for pasting into issue reports (no paths to source snippets).
     #[arg(long)]
     pub feedback: bool,
@@ -56,10 +48,6 @@ pub struct AnointOpts {
     #[arg(long)]
     pub update_rules: bool,
 
-    /// Reserved for future machine-assisted suggestions.
-    #[arg(long, hide = true)]
-    pub llm: bool,
-
     /// Path to the Cargo.toml to analyze (defaults to current directory).
     #[arg(long, value_name = "PATH")]
     pub manifest_path: Option<std::path::PathBuf>,
@@ -68,27 +56,22 @@ pub struct AnointOpts {
     #[arg(long)]
     pub audit_code: bool,
 
-    /// Skip the default bullshit detector code audit.
-    #[arg(long, hide = true)]
-    pub no_audit_code: bool,
-
     /// Output suggestions in JSON format.
     #[arg(long)]
     pub json: bool,
 
-    /// Exit non-zero when any dependency suggestion matches one of these impacts (comma-separated: low, medium, high, critical).
-    /// `critical` is treated as **high** until a separate code-audit gate exists.
-    #[arg(long, value_delimiter = ',')]
-    pub fail_on: Vec<String>,
+    /// Exit non-zero when any dependency suggestion matches an impact (low, medium, high).
+    #[arg(long, value_delimiter = ',', value_enum)]
+    pub fail_on: Vec<cargo_anoint::suggestions::Impact>,
     /// Fail only on curated potential capability overlaps (independent of --fail-on impact levels).
     #[arg(long)]
     pub fail_on_overlap: bool,
 
-    /// Analyze every workspace member’s `Cargo.toml` (one `cargo metadata` call).
+    /// Analyze every workspace member using one dependency resolution.
     #[arg(long)]
     pub workspace: bool,
 
-    /// Only analyze these workspace member package names (comma-separated). Implies member selection; combine with `--workspace` to avoid ambiguity on some layouts.
+    /// Only analyze these exact workspace member package names (comma-separated). Implies member selection; combine with `--workspace` to avoid ambiguity on some layouts.
     #[arg(long, value_delimiter = ',')]
     pub package: Vec<String>,
     /// Include dev-dependencies and build-dependencies in analysis.
@@ -111,7 +94,7 @@ pub struct AnointOpts {
     #[arg(long)]
     pub offline: bool,
 
-    /// Path to an anoint.toml policy file for custom rules and overrides.
+    /// Path to an anoint.toml policy file for suppressions and enforcement settings.
     #[arg(long, value_name = "PATH")]
     pub policy: Option<std::path::PathBuf>,
 
@@ -167,22 +150,14 @@ pub struct CodeAuditOpts {
     pub hardcoded: bool,
 
     /// Output findings as SARIF 2.1.0 JSON (for GitHub code-scanning / PR annotations).
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["json", "hardcoded"])]
     pub sarif: bool,
 
     /// Exit non-zero if any finding has confidence >= this value (0.0–1.0).
     #[arg(long, value_name = "FLOAT")]
-    pub fail_on_confidence: Option<f64>,
+    pub fail_on_confidence: Option<cargo_anoint::code_audit::AuditThreshold>,
 
-    /// Auto-fix safe findings: replaces `.unwrap()` with `.expect("TODO")` (writes *.rs.bak backups).
-    #[arg(long)]
-    pub fix: bool,
-
-    /// With `--fix`, show what would be changed without writing files or backups.
-    #[arg(long)]
-    pub dry_run: bool,
-
-    /// Also scan tests/, examples/, and benches/ (default: src/ only).
+    /// Include test-only Rust items and tests, examples, and benches.
     #[arg(long)]
     pub include_tests: bool,
 }

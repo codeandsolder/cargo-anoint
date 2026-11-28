@@ -1,6 +1,6 @@
 //! BS Detector — finds hardcoded bullshit values in Rust source files.
 //!
-//! Scans `.rs` files for:
+//! Inspects Rust syntax-tree literals for:
 //! - Magic numbers (non-trivial numeric literals)
 //! - Hardcoded URLs
 //! - API keys / tokens / secrets
@@ -8,8 +8,9 @@
 //! - IP addresses
 //! - Hardcoded credentials
 
-use std::fs;
+use std::net::IpAddr;
 use std::path::Path;
+use tree_sitter::Node;
 
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
@@ -21,8 +22,6 @@ pub struct BSHit {
     pub file: String,
     /// Line number (1-based).
     pub line: usize,
-    /// The raw text of the line (trimmed).
-    pub line_text: String,
     /// Category of the BS.
     pub category: BSCategory,
     /// The matched value.
@@ -57,334 +56,250 @@ impl std::fmt::Display for BSCategory {
     }
 }
 
-struct Patterns {
-    ip_check: regex::Regex,
-    numbers: regex::Regex,
-    urls: regex::Regex,
-    keys: regex::Regex,
-    paths: regex::Regex,
-    ips: regex::Regex,
-    credentials: regex::Regex,
-    timeouts: regex::Regex,
-}
-
-impl Patterns {
-    fn new() -> Result<Self, regex::Error> {
-        Ok(Self {
-            ip_check: regex::Regex::new(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b")?,
-            numbers: regex::Regex::new(r"\b(\d{3,}|\d+\.\d+)\b")?,
-            urls: regex::Regex::new(r#"(https?://[^\s"'`<>\)\]]+)"#)?,
-            keys: regex::Regex::new(
-                r#"(?i)(api[_-]?key|token|secret|password|passwd|auth[_-]?token)\s*=\s*["']([^"']+)["']"#,
-            )?,
-            paths: regex::Regex::new(r#"["'](/[a-zA-Z0-9_/.-]+)["']"#)?,
-            ips: regex::Regex::new(r"\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b")?,
-            credentials: regex::Regex::new(
-                r#"(?i)(password|passwd|pwd)\s*[:=]\s*["']([^"']{3,})["']"#,
-            )?,
-            timeouts: regex::Regex::new(
-                r"(?i)(timeout|duration|interval|delay)\s*[:=]\s*(\d+)\s*(ms|seconds?|minutes?|hours?)?",
-            )?,
-        })
+/// Inspect a literal already visited by the shared syntax-tree walk.
+pub(crate) fn inspect_literal(node: Node<'_>, source: &[u8], path: &Path, hits: &mut Vec<BSHit>) {
+    if !matches!(
+        node.kind(),
+        "integer_literal" | "float_literal" | "string_literal" | "raw_string_literal"
+    ) {
+        return;
     }
-}
-
-/// Scan a directory tree for hardcoded bullshit values.
-///
-/// # Errors
-/// Returns an error if a built-in regular expression cannot be compiled.
-pub fn scan_dir(root: &Path) -> Result<Vec<BSHit>, regex::Error> {
-    let patterns = Patterns::new()?;
-    let mut hits = Vec::new();
-    scan_path(root, &mut hits, &patterns);
-    hits.sort_by(|a, b| a.file.cmp(&b.file).then(a.line.cmp(&b.line)));
-    Ok(hits)
-}
-
-fn scan_path(dir: &Path, hits: &mut Vec<BSHit>, patterns: &Patterns) {
-    let Ok(entries) = fs::read_dir(dir) else {
+    let Ok(text) = node.utf8_text(source) else {
         return;
     };
+    let finding = match node.kind() {
+        "integer_literal" | "float_literal" => inspect_number(node, text, source),
+        "string_literal" | "raw_string_literal" => inspect_string(node, text, source),
+        _ => None,
+    };
+    if let Some((category, value, suggestion)) = finding {
+        hits.push(BSHit {
+            file: path.display().to_string(),
+            line: node.start_position().row + 1,
+            category,
+            value,
+            suggestion: suggestion.to_owned(),
+        });
+    }
+}
 
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            // Skip common non-source directories
-            let skip = ["target", ".git", "node_modules", ".cargo"];
-            if let Some(name) = path.file_name().and_then(|n| n.to_str())
-                && skip.contains(&name)
-            {
-                continue;
-            }
-            scan_path(&path, hits, patterns);
-        } else if path.extension().and_then(|e| e.to_str()) == Some("rs")
-            && let Ok(content) = fs::read_to_string(&path)
+type Finding = (BSCategory, String, &'static str);
+
+/// Follow only transparent expression wrappers, not arbitrary enclosing expressions.
+fn literal_expression(mut node: Node<'_>) -> Node<'_> {
+    while let Some(parent) = node.parent().filter(|parent| {
+        matches!(
+            parent.kind(),
+            "parenthesized_expression" | "unary_expression" | "negative_literal"
+        )
+    }) {
+        node = parent;
+    }
+    node
+}
+
+fn binding_name<'a>(node: Node<'_>, source: &'a [u8]) -> Option<&'a str> {
+    let expr = literal_expression(node);
+    let parent = expr.parent()?;
+    let field = match parent.kind() {
+        "let_declaration" => "pattern",
+        "const_item" | "static_item" => "name",
+        "field_initializer" => "field",
+        "assignment_expression" => "left",
+        _ => return None,
+    };
+    let value_field = if parent.kind() == "assignment_expression" {
+        "right"
+    } else {
+        "value"
+    };
+    if parent.child_by_field_name(value_field)? != expr {
+        return None;
+    }
+    let name = parent.child_by_field_name(field)?;
+    let name = if name.kind() == "field_expression" {
+        name.child_by_field_name("field")?
+    } else {
+        name
+    };
+    if !matches!(name.kind(), "identifier" | "field_identifier") {
+        return None;
+    }
+    name.utf8_text(source).ok()
+}
+
+fn is_named_constant(node: Node<'_>) -> bool {
+    let expr = literal_expression(node);
+    expr.parent().is_some_and(|parent| {
+        matches!(parent.kind(), "const_item" | "static_item")
+            && parent.child_by_field_name("value") == Some(expr)
+    })
+}
+
+fn inspect_number(node: Node<'_>, text: &str, source: &[u8]) -> Option<Finding> {
+    if is_named_constant(node) {
+        return None;
+    }
+    let value = numeric_value(text)?;
+    if value <= 2.0 && value.fract().abs() < f64::EPSILON {
+        return None;
+    }
+    let timeout = binding_name(node, source).is_some_and(|name| {
+        let name = name.to_ascii_lowercase();
+        ["timeout", "duration", "interval", "delay"]
+            .iter()
+            .any(|part| name.split('_').any(|word| word == *part))
+    }) || duration_argument(node, source);
+    if timeout {
+        return Some((
+            BSCategory::HardcodedTimeout,
+            text.to_owned(),
+            "Review whether the timing policy should be a named default or explicit configuration.",
+        ));
+    }
+    if node.kind() == "float_literal" || value >= 100.0 {
+        return Some((
+            BSCategory::MagicNumber,
+            text.to_owned(),
+            "Review whether a named constant would clarify the value's meaning.",
+        ));
+    }
+    None
+}
+
+// Used only for magnitude classification; the finding retains the exact source literal.
+fn numeric_value(text: &str) -> Option<f64> {
+    let text = text.replace('_', "");
+    let (radix, digits) = if let Some(digits) = text.strip_prefix("0x") {
+        (16, digits)
+    } else if let Some(digits) = text.strip_prefix("0o") {
+        (8, digits)
+    } else if let Some(digits) = text.strip_prefix("0b") {
+        (2, digits)
+    } else {
+        let number = [
+            "u128", "i128", "usize", "isize", "u64", "i64", "u32", "i32", "u16", "i16", "u8", "i8",
+            "f64", "f32",
+        ]
+        .iter()
+        .find_map(|suffix| text.strip_suffix(suffix))
+        .unwrap_or(&text);
+        return number.parse().ok();
+    };
+    // Hexadecimal f32/f64 may be digits, not a suffix. Only integer suffixes apply.
+    let mut value = 0.0_f64;
+    for digit in digits.chars().map_while(|ch| ch.to_digit(radix)) {
+        value = value.mul_add(f64::from(radix), f64::from(digit));
+    }
+    Some(value)
+}
+
+fn duration_argument(node: Node<'_>, source: &[u8]) -> bool {
+    let Some(args) = literal_expression(node)
+        .parent()
+        .filter(|parent| parent.kind() == "arguments")
+    else {
+        return false;
+    };
+    let Some(call) = args
+        .parent()
+        .filter(|parent| parent.kind() == "call_expression")
+    else {
+        return false;
+    };
+    let Some(function) = call
+        .child_by_field_name("function")
+        .and_then(|function| function.utf8_text(source).ok())
+    else {
+        return false;
+    };
+    let mut segments = function.rsplit("::").map(str::trim);
+    matches!(
+        (segments.next(), segments.next()),
+        (
+            Some(
+                "from_secs"
+                    | "from_millis"
+                    | "from_micros"
+                    | "from_nanos"
+                    | "from_secs_f32"
+                    | "from_secs_f64"
+            ),
+            Some("Duration")
+        )
+    )
+}
+
+fn inspect_string(node: Node<'_>, text: &str, source: &[u8]) -> Option<Finding> {
+    // Preserve escapes rather than guessing at invalid or byte-string contents.
+    let (prefix, rest) = text.split_once('"')?;
+    let end = rest.rfind('"')?;
+    let content = rest.get(..end)?;
+    if content.is_empty() || prefix.starts_with('b') || prefix.starts_with('c') {
+        return None;
+    }
+    if let Some(name) = binding_name(node, source) {
+        let lower = name.to_ascii_lowercase();
+        let category = if lower
+            .split('_')
+            .any(|part| matches!(part, "password" | "passwd" | "pwd"))
         {
-            for (i, line) in content.lines().enumerate() {
-                check_line(&path, i + 1, line, hits, patterns);
-            }
-        }
-    }
-}
-
-/// Check a single line for hardcoded bullshit.
-fn check_line(
-    path: &Path,
-    line_num: usize,
-    line: &str,
-    hits: &mut Vec<BSHit>,
-    patterns: &Patterns,
-) {
-    let trimmed = line.trim();
-
-    // Skip comments (but still check doc comments for URLs)
-    if trimmed.starts_with("//") && !trimmed.starts_with("///") && !trimmed.starts_with("//!") {
-        return;
-    }
-
-    detect_magic_numbers(path, line_num, trimmed, hits, patterns);
-    detect_hardcoded_urls(path, line_num, trimmed, hits, patterns);
-    detect_api_keys(path, line_num, trimmed, hits, patterns);
-    detect_file_paths(path, line_num, trimmed, hits, patterns);
-    detect_ip_addresses(path, line_num, trimmed, hits, patterns);
-    detect_credentials(path, line_num, trimmed, hits, patterns);
-    detect_hardcoded_timeouts(path, line_num, trimmed, hits, patterns);
-}
-
-/// Detect magic numbers — numeric literals that aren't 0, 1, -1, 2, or common constants.
-fn detect_magic_numbers(
-    path: &Path,
-    line_num: usize,
-    line: &str,
-    hits: &mut Vec<BSHit>,
-    patterns: &Patterns,
-) {
-    // Skip lines that are clearly defining a constant
-    if line.contains("const ") || line.contains("static ") {
-        return;
-    }
-    if patterns.ip_check.is_match(line) {
-        return;
-    }
-
-    // Match numeric literals (integers and floats)
-    let re = &patterns.numbers;
-    for cap in re.captures_iter(line) {
-        let value = &cap[1];
-
-        // Skip common non-magic values
-        let skip_values = [
-            "2024", "2025", "2026", // years
-            "1970", // epoch
-            "1000", "10000", "100000", // powers of 10
-            "255", "256", "512", "1024", // byte sizes
-            "80", "443", "8080", "8443", // common ports (handled elsewhere)
-        ];
-
-        if skip_values.contains(&value) {
-            continue;
-        }
-
-        hits.push(BSHit {
-            file: path.display().to_string(),
-            line: line_num,
-            line_text: line.to_string(),
-            category: BSCategory::MagicNumber,
-            value: value.to_string(),
-            suggestion: "Extract to a named constant with a descriptive name".to_string(),
-        });
-    }
-}
-
-/// Detect hardcoded URLs.
-fn detect_hardcoded_urls(
-    path: &Path,
-    line_num: usize,
-    line: &str,
-    hits: &mut Vec<BSHit>,
-    patterns: &Patterns,
-) {
-    let re = &patterns.urls;
-    for cap in re.captures_iter(line) {
-        let url = &cap[1];
-
-        // Skip documentation URLs and common non-problematic ones
-        if line.starts_with("///") || line.starts_with("//!") {
-            continue;
-        }
-        if url.contains("doc.rust-lang.org")
-            || url.contains("crates.io")
-            || url.contains("github.com")
-            || url.contains("example.com")
+            Some(BSCategory::HardcodedCredential)
+        } else if lower.ends_with("api_key")
+            || lower.ends_with("apikey")
+            || lower
+                .split('_')
+                .any(|part| matches!(part, "token" | "secret"))
         {
-            continue;
+            Some(BSCategory::ApiKeyOrToken)
+        } else {
+            None
+        };
+        if let Some(category) = category {
+            return (!is_placeholder(content)).then(|| {
+                (
+                    category,
+                    format!("{name}=***"),
+                    "Use an explicit credential provider or secret store.",
+                )
+            });
         }
-
-        hits.push(BSHit {
-            file: path.display().to_string(),
-            line: line_num,
-            line_text: line.to_string(),
-            category: BSCategory::HardcodedUrl,
-            value: url.to_string(),
-            suggestion: "Move to a config file or environment variable".to_string(),
+    }
+    if content.starts_with("https://") || content.starts_with("http://") {
+        return Some((
+            BSCategory::HardcodedUrl,
+            content.to_owned(),
+            "Review whether this is a fixed protocol endpoint or should be configurable.",
+        ));
+    }
+    if let Ok(ip) = content.parse::<IpAddr>() {
+        return (!ip.is_loopback() && !ip.is_unspecified()).then(|| {
+            (
+                BSCategory::IpAddress,
+                content.to_owned(),
+                "Review whether this address should be configurable.",
+            )
         });
     }
+    if content.starts_with('/') && content.len() > 1
+        || content
+            .as_bytes()
+            .get(1..3)
+            .is_some_and(|bytes| matches!(bytes, b":\\" | b":/"))
+    {
+        return Some((
+            BSCategory::FilePath,
+            content.to_owned(),
+            "Review whether this absolute path is platform-specific or should be configurable.",
+        ));
+    }
+    None
 }
 
-/// Detect API keys, tokens, and secrets.
-fn detect_api_keys(
-    path: &Path,
-    line_num: usize,
-    line: &str,
-    hits: &mut Vec<BSHit>,
-    patterns: &Patterns,
-) {
-    let re = &patterns.keys;
-
-    for cap in re.captures_iter(line) {
-        let value = &cap[2];
-
-        // Skip placeholder values
-        if value.is_empty()
-            || value.contains("YOUR_")
-            || value.contains("REPLACE_")
-            || value.contains("CHANGE_ME")
-            || value == "..."
-            || value == "xxx"
-        {
-            continue;
-        }
-
-        hits.push(BSHit {
-            file: path.display().to_string(),
-            line: line_num,
-            line_text: line.to_string(),
-            category: BSCategory::ApiKeyOrToken,
-            value: format!("{}=***", &cap[1]),
-            suggestion: "Use an environment variable or secrets manager".to_string(),
-        });
-    }
-}
-
-/// Detect hardcoded file paths.
-fn detect_file_paths(
-    path: &Path,
-    line_num: usize,
-    line: &str,
-    hits: &mut Vec<BSHit>,
-    patterns: &Patterns,
-) {
-    let re = &patterns.paths;
-    for cap in re.captures_iter(line) {
-        let p = &cap[1];
-
-        // Skip common non-problematic paths
-        if p.starts_with("/usr/") || p.starts_with("/etc/") || p.starts_with("/var/") {
-            continue;
-        }
-        if p == "/" || p == "." || p == ".." {
-            continue;
-        }
-
-        hits.push(BSHit {
-            file: path.display().to_string(),
-            line: line_num,
-            line_text: line.to_string(),
-            category: BSCategory::FilePath,
-            value: p.to_string(),
-            suggestion: "Use a config file or environment variable for paths".to_string(),
-        });
-    }
-}
-
-/// Detect hardcoded IP addresses.
-fn detect_ip_addresses(
-    path: &Path,
-    line_num: usize,
-    line: &str,
-    hits: &mut Vec<BSHit>,
-    patterns: &Patterns,
-) {
-    let re = &patterns.ips;
-    for cap in re.captures_iter(line) {
-        let ip = &cap[1];
-
-        // Skip localhost and common non-problematic IPs
-        if ip == "127.0.0.1" || ip.starts_with("0.") || ip == "255.255.255.255" {
-            continue;
-        }
-
-        hits.push(BSHit {
-            file: path.display().to_string(),
-            line: line_num,
-            line_text: line.to_string(),
-            category: BSCategory::IpAddress,
-            value: ip.to_string(),
-            suggestion: "Use a hostname or configuration setting instead of hardcoded IP"
-                .to_string(),
-        });
-    }
-}
-
-/// Detect hardcoded credentials (passwords in strings).
-fn detect_credentials(
-    path: &Path,
-    line_num: usize,
-    line: &str,
-    hits: &mut Vec<BSHit>,
-    patterns: &Patterns,
-) {
-    let re = &patterns.credentials;
-
-    for cap in re.captures_iter(line) {
-        let value = &cap[2];
-
-        // Skip placeholders
-        if value.contains("YOUR_") || value.contains("REPLACE_") || value == "..." {
-            continue;
-        }
-
-        hits.push(BSHit {
-            file: path.display().to_string(),
-            line: line_num,
-            line_text: line.to_string(),
-            category: BSCategory::HardcodedCredential,
-            value: format!("{}=***", &cap[1]),
-            suggestion:
-                "NEVER hardcode credentials. Use environment variables or a secrets manager."
-                    .to_string(),
-        });
-    }
-}
-
-/// Detect hardcoded timeouts/durations that should be configurable.
-fn detect_hardcoded_timeouts(
-    path: &Path,
-    line_num: usize,
-    line: &str,
-    hits: &mut Vec<BSHit>,
-    patterns: &Patterns,
-) {
-    let re = &patterns.timeouts;
-
-    for cap in re.captures_iter(line) {
-        let value = &cap[2];
-
-        // Skip trivial values
-        if value == "0" || value == "1" {
-            continue;
-        }
-
-        hits.push(BSHit {
-            file: path.display().to_string(),
-            line: line_num,
-            line_text: line.to_string(),
-            category: BSCategory::HardcodedTimeout,
-            value: format!("{value} {}", cap.get(3).map_or("", |m| m.as_str())),
-            suggestion: "Make timeouts configurable via environment variables or config files"
-                .to_string(),
-        });
-    }
+fn is_placeholder(content: &str) -> bool {
+    content.starts_with("YOUR_")
+        || content.starts_with("REPLACE_")
+        || matches!(content, "CHANGE_ME" | "..." | "xxx")
 }
 
 /// Render BS hits to stdout.
@@ -440,185 +355,111 @@ pub fn render_bs_hits(hits: &[BSHit]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
-    use tempfile::TempDir;
+    use anyhow::Result;
 
-    fn check_line(path: &Path, line_num: usize, line: &str, hits: &mut Vec<BSHit>) {
-        super::check_line(path, line_num, line, hits, &Patterns::new().unwrap());
-    }
-
-    fn create_test_file(dir: &Path, name: &str, content: &str) -> PathBuf {
-        let path = dir.join(name);
-        fs::write(&path, content).unwrap();
-        path
+    fn scan(body: &str) -> Result<Vec<BSHit>> {
+        let source = format!("fn fixture() {{\n{body}\n}}");
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&tree_sitter_rust::LANGUAGE.into())?;
+        let tree = parser
+            .parse(&source, None)
+            .ok_or_else(|| anyhow::anyhow!("parse fixture"))?;
+        let mut stack = vec![tree.root_node()];
+        let mut hits = Vec::new();
+        while let Some(node) = stack.pop() {
+            inspect_literal(node, source.as_bytes(), Path::new("test.rs"), &mut hits);
+            stack.extend(node.named_children(&mut node.walk()));
+        }
+        hits.sort_by_key(|hit| hit.line);
+        Ok(hits)
     }
 
     #[test]
-    fn test_detect_magic_number() {
-        let mut hits = Vec::new();
-        check_line(
-            Path::new("test.rs"),
-            1,
-            "let buffer_size = 4096;",
-            &mut hits,
+    fn numeric_literals_not_string_contents_or_constant_definitions() -> Result<()> {
+        let hits = scan(
+            r#"
+            const BUFFER: usize = 8192;
+            let label = "12345 v1.2.3";
+            let literal = 4_096usize;
+            let hex = 0xfeed_u32;
+            let binary = 0b1111_1111;
+            let tiny = 2;
+            let year = 2026;
+            let ratio = 3.14f32;
+            let small = 0.03f64;
+        "#,
+        )?;
+        let values: Vec<_> = hits.iter().map(|hit| hit.value.as_str()).collect();
+        assert_eq!(
+            values,
+            [
+                "4_096usize",
+                "0xfeed_u32",
+                "0b1111_1111",
+                "2026",
+                "3.14f32",
+                "0.03f64"
+            ]
         );
-        assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].category, BSCategory::MagicNumber);
-        assert_eq!(hits[0].value, "4096");
+        Ok(())
     }
 
     #[test]
-    fn test_skip_common_numbers() {
-        let mut hits = Vec::new();
-        check_line(Path::new("test.rs"), 1, "let x = 1024;", &mut hits);
-        assert!(hits.is_empty(), "1024 should be skipped");
-
-        check_line(Path::new("test.rs"), 2, "let year = 2025;", &mut hits);
-        assert!(hits.is_empty(), "2025 should be skipped");
-    }
-
-    #[test]
-    fn test_detect_hardcoded_url() {
-        let mut hits = Vec::new();
-        check_line(
-            Path::new("test.rs"),
-            1,
-            "let url = \"https://api.example-service.com/v1/data\";",
-            &mut hits,
+    fn detects_ip_literals_and_absolute_paths_without_matching_versions() -> Result<()> {
+        let hits = scan(
+            r##"
+            let host = "192.168.1.100";
+            let ipv6 = "2001:db8::1";
+            let invalid = "999.999.999.999";
+            let loopback = "127.0.0.1";
+            let version = "1.2.3.4.5";
+            let path = "/home/build";
+            let windows = r#"C:\build"#;
+        "##,
+        )?;
+        assert_eq!(
+            hits.iter()
+                .filter(|hit| hit.category == BSCategory::IpAddress)
+                .count(),
+            2
         );
         assert_eq!(
             hits.iter()
-                .filter(|h| matches!(h.category, BSCategory::HardcodedUrl))
+                .filter(|hit| hit.category == BSCategory::FilePath)
                 .count(),
-            1
+            2
         );
+        Ok(())
     }
 
     #[test]
-    fn test_skip_doc_urls() {
-        let mut hits = Vec::new();
-        check_line(
-            Path::new("test.rs"),
-            1,
-            "/// See https://doc.rust-lang.org/std for more",
-            &mut hits,
-        );
-        assert!(hits.is_empty(), "doc URLs should be skipped");
+    fn detects_multiline_typed_credentials_without_leaking_value() -> Result<()> {
+        let hits = scan(
+            r##"
+            const API_KEY: &str =
+                r#"https://example.com/12345"#;
+            let password: &str = "fake_123";
+            let api_key = "YOUR_API_KEY";
+            let url = "https://api.example-service.com/v1/data";
+        "##,
+        )?;
+        assert_eq!(hits.len(), 3);
+        assert_eq!(hits[0].category, BSCategory::ApiKeyOrToken);
+        assert_eq!(hits[0].value, "API_KEY=***");
+        assert_eq!(hits[1].category, BSCategory::HardcodedCredential);
+        assert_eq!(hits[1].value, "password=***");
+        assert_eq!(hits[2].category, BSCategory::HardcodedUrl);
+        Ok(())
     }
 
     #[test]
-    fn test_detect_api_key() {
-        let mut hits = Vec::new();
-        check_line(
-            Path::new("test.rs"),
-            1,
-            r#"let api_key = "sk-abc123def456";"#,
-            &mut hits,
-        );
-        assert_eq!(
-            hits.iter()
-                .filter(|h| matches!(h.category, BSCategory::ApiKeyOrToken))
-                .count(),
-            1
-        );
-    }
-
-    #[test]
-    fn test_skip_placeholder_api_key() {
-        let mut hits = Vec::new();
-        check_line(
-            Path::new("test.rs"),
-            1,
-            r#"let api_key = "YOUR_API_KEY_HERE";"#,
-            &mut hits,
-        );
-        assert!(hits.is_empty(), "placeholder keys should be skipped");
-    }
-
-    #[test]
-    fn test_detect_hardcoded_credential() {
-        let mut hits = Vec::new();
-        check_line(
-            Path::new("test.rs"),
-            1,
-            r#"let password = "super_secret_123";"#,
-            &mut hits,
-        );
-        assert_eq!(
-            hits.iter()
-                .filter(|h| matches!(h.category, BSCategory::HardcodedCredential))
-                .count(),
-            1
-        );
-    }
-
-    #[test]
-    fn test_detect_ip_address() {
-        let mut hits = Vec::new();
-        check_line(
-            Path::new("test.rs"),
-            1,
-            "let host = \"192.168.1.100\";",
-            &mut hits,
-        );
-        assert_eq!(
-            hits.iter()
-                .filter(|h| matches!(h.category, BSCategory::IpAddress))
-                .count(),
-            1
-        );
-    }
-
-    #[test]
-    fn test_skip_localhost() {
-        let mut hits = Vec::new();
-        check_line(
-            Path::new("test.rs"),
-            1,
-            "let host = \"127.0.0.1\";",
-            &mut hits,
-        );
-        assert!(hits.is_empty(), "localhost should be skipped");
-    }
-
-    #[test]
-    fn test_detect_hardcoded_timeout() {
-        let mut hits = Vec::new();
-        check_line(Path::new("test.rs"), 1, "let timeout = 5000ms;", &mut hits);
-        assert_eq!(
-            hits.iter()
-                .filter(|h| matches!(h.category, BSCategory::HardcodedTimeout))
-                .count(),
-            1
-        );
-    }
-
-    #[test]
-    fn test_scan_directory() {
-        let tmp = TempDir::new().unwrap();
-        create_test_file(tmp.path(), "magic.rs", "let x = 4096;\nlet y = 8192;");
-        create_test_file(tmp.path(), "keys.rs", r#"let api_key = "sk-real-key";"#);
-
-        let hits = scan_dir(tmp.path()).unwrap();
+    fn detects_actual_timing_expressions_without_duplicate_numeric_findings() -> Result<()> {
+        let hits = scan("let timeout: u64 = 5000; let delay = Duration::from_millis(750);")?;
+        assert_eq!(hits.len(), 2);
         assert!(
-            hits.len() >= 3,
-            "should find at least 3 hits, got {}",
-            hits.len()
+            hits.iter()
+                .all(|hit| hit.category == BSCategory::HardcodedTimeout)
         );
-
-        let categories: Vec<_> = hits.iter().map(|h| &h.category).collect();
-        assert!(categories.contains(&&BSCategory::MagicNumber));
-        assert!(categories.contains(&&BSCategory::ApiKeyOrToken));
-    }
-
-    #[test]
-    fn test_skip_target_directory() {
-        let tmp = TempDir::new().unwrap();
-        let target_dir = tmp.path().join("target");
-        fs::create_dir_all(&target_dir).unwrap();
-        create_test_file(&target_dir, "magic.rs", "let x = 99999;");
-
-        let hits = scan_dir(tmp.path()).unwrap();
-        assert!(hits.is_empty(), "target/ should be skipped");
+        Ok(())
     }
 }

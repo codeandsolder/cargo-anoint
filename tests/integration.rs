@@ -23,21 +23,6 @@ fn test_bless_reports_deps() {
         .stdout(predicate::str::contains("Found"));
 }
 
-/// Running with --fix --dry-run should analyze and show fix preview.
-#[test]
-fn test_fix_dry_run() {
-    cargo_anoint_cmd()
-        .arg("--fix")
-        .arg("--dry-run")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Dry-run"))
-        .stdout(
-            predicate::str::contains("No auto-fixable suggestions")
-                .or(predicate::str::contains("Nothing to modernize")),
-        );
-}
-
 /// Running with --help should print usage information.
 #[test]
 fn test_help_flag() {
@@ -64,7 +49,7 @@ fn test_fail_on_unknown_level_exits_nonzero() {
     cmd.arg("anoint").arg("--fail-on=bogus");
     cmd.assert()
         .failure()
-        .stderr(predicate::str::contains("unknown --fail-on level"));
+        .stderr(predicate::str::contains("invalid value"));
 }
 
 #[test]
@@ -126,7 +111,7 @@ lazy_static = "1"
     fs::create_dir_all(tmp.path().join("src")).expect("create src");
     fs::write(tmp.path().join("src/main.rs"), "fn main() {}").expect("write main.rs");
 
-    fs::write(&policy_path, "fail_on = [\"high\"]\n").expect("write anoint.toml");
+    fs::write(&policy_path, "fail_on = [\"High\"]\n").expect("write anoint.toml");
 
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("anoint")
@@ -139,27 +124,6 @@ lazy_static = "1"
     cmd.assert().failure().stderr(predicate::str::contains(
         "exiting with non-zero status: at least one dependency suggestion matched --fail-on",
     ));
-}
-
-#[test]
-fn test_dry_run_without_fix_exits_nonzero() {
-    cargo_anoint_cmd()
-        .arg("--dry-run")
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("--dry-run requires --fix"));
-}
-
-#[test]
-fn test_json_fix_combination_exits_nonzero() {
-    cargo_anoint_cmd()
-        .arg("--json")
-        .arg("--fix")
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains(
-            "--json cannot be combined with --fix",
-        ));
 }
 
 #[test]
@@ -188,15 +152,32 @@ fn test_feedback_prints_block() {
 }
 
 #[test]
-fn test_feedback_with_fix_exits_nonzero() {
-    cargo_anoint_cmd()
-        .arg("--feedback")
-        .arg("--fix")
+fn feedback_applies_all_targets_from_policy() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let manifest = dir.path().join("Cargo.toml");
+    let dependency = dir.path().join("local");
+    std::fs::create_dir(&dependency)?;
+    std::fs::write(
+        dependency.join("Cargo.toml"),
+        "[package]\nname = \"local\"\nversion = \"0.1.0\"\n[lib]\npath = \"lib.rs\"\n",
+    )?;
+    std::fs::write(dependency.join("lib.rs"), "")?;
+    std::fs::write(
+        &manifest,
+        "[package]\nname = \"feedback-fixture\"\nversion = \"0.1.0\"\n[lib]\npath = \"lib.rs\"\n[dev-dependencies]\nlocal = { path = \"local\" }\n",
+    )?;
+    std::fs::write(dir.path().join("lib.rs"), "")?;
+    std::fs::write(
+        dir.path().join("anoint.toml"),
+        "[settings]\nall_targets = true\n",
+    )?;
+    Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"))
+        .args(["anoint", "--feedback", "--manifest-path"])
+        .arg(manifest)
         .assert()
-        .failure()
-        .stderr(predicate::str::contains(
-            "--feedback cannot be combined with --fix",
-        ));
+        .success()
+        .stdout(predicate::str::contains("direct_deps: 1"));
+    Ok(())
 }
 
 #[test]
@@ -292,9 +273,9 @@ memmap = "0.7"
     assert!(stdout.contains("memmap"), "should detect memmap");
 }
 
-/// Verify --fix --dry-run on a project with auto-fixable deps shows the diff.
+/// Recommendations must never modify the manifest or offer automatic migration.
 #[test]
-fn test_fix_dry_run_on_outdated_project() {
+fn test_scan_outdated_project_is_read_only() {
     use std::fs;
     use tempfile::TempDir;
 
@@ -341,16 +322,19 @@ serde_derive = { path = "crates/serde_derive" }
     cmd.arg("anoint")
         .arg("--manifest-path")
         .arg(&manifest)
-        .arg("--fix")
-        .arg("--dry-run")
         .arg("--offline");
 
+    let original = fs::read_to_string(&manifest).expect("read original manifest");
     let output = cmd.output().expect("run cargo-anoint");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "should exit 0: {}", stdout);
+    assert_eq!(
+        fs::read_to_string(&manifest).expect("read manifest after scan"),
+        original
+    );
     assert!(
-        stdout.contains("No auto-fixable suggestions"),
+        !stdout.contains("--fix"),
         "unsafe automatic edits must not be offered"
     );
     assert!(
@@ -460,16 +444,10 @@ edition = "2021"
 }
 
 #[test]
-fn test_no_audit_code_remains_accepted_as_noop() {
-    let output = cargo_anoint_cmd()
-        .arg("--offline")
-        .arg("--no-audit-code")
-        .output()
-        .expect("run cargo-anoint");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    assert!(output.status.success(), "should exit 0: {}", stdout);
-    assert!(!stdout.contains("Bullshit detector code audit"));
+fn obsolete_and_unimplemented_flags_are_rejected() {
+    for flag in ["--no-audit-code", "--llm"] {
+        cargo_anoint_cmd().arg(flag).assert().failure();
+    }
 }
 
 #[test]
@@ -982,6 +960,51 @@ edition = "2021"
 }
 
 #[test]
+fn package_selection_rejects_blank_and_wrong_case() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let manifest = tmp.path().join("Cargo.toml");
+    std::fs::write(
+        &manifest,
+        "[package]\nname = \"MixedCase\"\nversion = \"0.1.0\"\n[lib]\npath = \"lib.rs\"\n",
+    )?;
+    std::fs::write(tmp.path().join("lib.rs"), "")?;
+    for selection in ["MixedCase", "mixedcase", " ", "MixedCase, "] {
+        let output = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"))
+            .args(["anoint", "--offline", "--manifest-path"])
+            .arg(&manifest)
+            .arg(format!("--package={selection}"))
+            .output()?;
+        assert_eq!(
+            output.status.success(),
+            selection == "MixedCase",
+            "{selection:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn unrelated_ancestor_lockfile_does_not_lock_nested_workspace() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    std::fs::write(tmp.path().join("Cargo.lock"), "# unrelated lockfile")?;
+    let nested = tmp.path().join("nested");
+    std::fs::create_dir(&nested)?;
+    let manifest = nested.join("Cargo.toml");
+    std::fs::write(
+        &manifest,
+        "[package]\nname = \"nested\"\nversion = \"0.1.0\"\n[lib]\npath = \"lib.rs\"\n[workspace]\n",
+    )?;
+    std::fs::write(nested.join("lib.rs"), "")?;
+    Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"))
+        .args(["anoint", "--offline", "--manifest-path"])
+        .arg(&manifest)
+        .assert()
+        .success();
+    Ok(())
+}
+
+#[test]
 fn test_explicit_policy_flag_suppresses_suggestion() {
     use std::fs;
     use tempfile::TempDir;
@@ -1034,6 +1057,99 @@ lazy_static = "1"
         "policy should suppress the lazy_static suggestion: {}",
         stdout
     );
+}
+
+#[test]
+fn diff_handles_non_ascii_paths_and_filters_both_detectors() -> anyhow::Result<()> {
+    use std::fs;
+    use std::process::Command as Git;
+    let tmp = tempfile::tempdir()?;
+    let root = tmp.path();
+    let member = root.join("member");
+    fs::create_dir_all(member.join("src"))?;
+    fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"member\"]\nresolver = \"3\"",
+    )?;
+    let manifest = member.join("Cargo.toml");
+    fs::write(
+        &manifest,
+        "[package]\nname = \"audit-diff\"\nversion = \"0.1.0\"\nedition = \"2024\"",
+    )?;
+    fs::write(member.join("src/lib.rs"), "")?;
+    let source = member.join("src/żółć test.rs");
+    fs::write(&source, "fn old() { let x = 45678; value().unwrap(); }\n")?;
+    for args in [
+        vec!["init"],
+        vec!["add", "."],
+        vec![
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            "initial",
+        ],
+    ] {
+        assert!(
+            Git::new("git")
+                .current_dir(root)
+                .args(args)
+                .status()?
+                .success()
+        );
+    }
+    fs::write(
+        &source,
+        "fn old() { let x = 45678; value().unwrap(); }\nfn new() { let x = 87654; value().unwrap(); }\n",
+    )?;
+    let output = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"))
+        .args(["bs", "--json", "--diff", "--hardcoded", "--manifest-path"])
+        .arg(&manifest)
+        .output()?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let alerts = report["code_audit"]["alerts"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("missing alerts"))?;
+    let hits = report["hardcoded_values"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("missing hardcoded values"))?;
+    assert_eq!(report["code_audit"]["files_scanned"], 1);
+    assert_eq!(alerts.len(), 1);
+    assert_eq!(alerts[0]["line"], 2);
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0]["value"], "87654");
+    Ok(())
+}
+
+#[test]
+fn explicit_confidence_gate_cannot_be_hidden_by_policy_threshold() -> anyhow::Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let manifest = tmp.path().join("Cargo.toml");
+    std::fs::write(
+        &manifest,
+        "[package]\nname = \"audit-gate\"\nversion = \"0.1.0\"\n[lib]\npath = \"lib.rs\"",
+    )?;
+    std::fs::write(tmp.path().join("lib.rs"), "fn f() { value().unwrap(); }")?;
+    std::fs::write(
+        tmp.path().join("anoint.toml"),
+        "[settings]\nmin_confidence = 0.99",
+    )?;
+    Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"))
+        .args(["bs", "--fail-on-confidence", "0.72", "--manifest-path"])
+        .arg(&manifest)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("exiting with non-zero status"));
+    Ok(())
 }
 
 #[test]
@@ -1321,6 +1437,45 @@ edition = "2021"
 }
 
 #[test]
+fn init_hooks_respects_configured_path_and_preserves_existing_hook() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let root = tmp.path();
+    assert!(
+        Command::new("git")
+            .current_dir(root)
+            .arg("init")
+            .output()
+            .expect("git init")
+            .status
+            .success()
+    );
+    assert!(
+        Command::new("git")
+            .current_dir(root)
+            .args(["config", "core.hooksPath", "custom-hooks"])
+            .output()
+            .expect("git config")
+            .status
+            .success()
+    );
+
+    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
+    cmd.current_dir(root).args(["anoint", "--init-hooks"]);
+    assert!(cmd.output().expect("install hook").status.success());
+    let path = root.join("custom-hooks/pre-commit");
+    let hook = std::fs::read_to_string(&path).expect("configured hook path");
+    assert!(hook.contains("cargo anoint bs --fail-on-confidence"));
+    std::fs::write(&path, "#!/bin/sh\n# existing hook\n").expect("existing hook");
+    let result = cmd.output().expect("second installation");
+    assert!(!result.status.success());
+    assert!(
+        std::fs::read_to_string(&path)
+            .expect("preserved hook")
+            .contains("# existing hook")
+    );
+}
+
+#[test]
 fn test_explain_flag_shows_rule_details() {
     let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
     cmd.arg("anoint").arg("--explain").arg("lazy_static");
@@ -1358,123 +1513,23 @@ fn test_explain_flag_unknown_pattern_exits_nonzero() {
 }
 
 #[test]
-fn test_bs_fix_replaces_unwrap_with_expect() {
-    use std::fs;
-    use tempfile::TempDir;
-
-    let tmp = TempDir::new().expect("temp dir");
-    let manifest = tmp.path().join("Cargo.toml");
-
-    fs::write(
-        &manifest,
-        r#"[package]
-name = "fix-test"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-"#,
-    )
-    .expect("write Cargo.toml");
-
-    fs::create_dir_all(tmp.path().join("src")).expect("create src");
-    fs::write(
-        tmp.path().join("src/main.rs"),
-        "fn main() { let x: Option<u32> = None; let _ = x.unwrap(); }\n",
-    )
-    .expect("write main.rs");
-
-    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
-    cmd.arg("bs")
-        .arg("--manifest-path")
-        .arg(&manifest)
-        .arg("--fix");
-
-    let output = cmd.output().expect("run cargo anoint bs --fix");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    assert!(output.status.success(), "should exit 0: {}", stdout);
-    assert!(
-        stdout.contains("Fixed"),
-        "should report fixes applied: {}",
-        stdout
-    );
-
-    let modified = fs::read_to_string(tmp.path().join("src/main.rs")).expect("read modified file");
-    assert!(
-        modified.contains(".expect("),
-        "source should contain .expect(): {}",
-        modified
-    );
-    assert!(
-        !modified.contains(".unwrap()"),
-        "source should no longer contain .unwrap(): {}",
-        modified
-    );
-
-    let backup = tmp.path().join("src/main.rs.bak");
-    assert!(backup.exists(), ".rs.bak backup should be created");
-    let backup_contents = fs::read_to_string(&backup).expect("read backup");
-    assert!(
-        backup_contents.contains(".unwrap()"),
-        "backup should contain original .unwrap(): {}",
-        backup_contents
-    );
-}
-
-#[test]
-fn test_bs_fix_dry_run_prints_preview_without_writing() {
-    use std::fs;
-    use tempfile::TempDir;
-
-    let tmp = TempDir::new().expect("temp dir");
-    let manifest = tmp.path().join("Cargo.toml");
-    let src = tmp.path().join("src/main.rs");
-
-    fs::write(
-        &manifest,
-        r#"[package]
-name = "fix-dry-run-test"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-"#,
-    )
-    .expect("write Cargo.toml");
-
-    fs::create_dir_all(tmp.path().join("src")).expect("create src");
-    let original = "fn main() { let x: Option<u32> = None; let _ = x.unwrap(); }\n";
-    fs::write(&src, original).expect("write main.rs");
-
-    let mut cmd = Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"));
-    cmd.arg("bs")
-        .arg("--manifest-path")
-        .arg(&manifest)
-        .arg("--fix")
-        .arg("--dry-run");
-
-    let output = cmd.output().expect("run cargo anoint bs --fix --dry-run");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    assert!(output.status.success(), "should exit 0: {}", stdout);
-    assert!(stdout.contains("Dry-run"), "should say dry-run: {}", stdout);
-    assert!(
-        stdout.contains("would be replaced"),
-        "should say what would be replaced: {}",
-        stdout
-    );
-
-    let after = fs::read_to_string(&src).expect("read file after dry-run");
-    assert_eq!(
-        after, original,
-        "source file must not be modified by --dry-run"
-    );
-    let backup = tmp.path().join("src/main.rs.bak");
-    assert!(
-        !backup.exists(),
-        "no backup should be written during --dry-run"
-    );
+fn test_bs_rejects_panic_preserving_autofix() -> anyhow::Result<()> {
+    let tmp = tempfile::TempDir::new()?;
+    let src = tmp.path().join("main.rs");
+    let original = "fn main() { let _ = None::<u32>.unwrap(); }";
+    std::fs::write(&src, original)?;
+    for command in ["bs", "anoint"] {
+        for flag in ["--fix", "--dry-run"] {
+            Command::new(assert_cmd::cargo::cargo_bin!("cargo-anoint"))
+                .current_dir(tmp.path())
+                .args([command, flag])
+                .assert()
+                .failure();
+        }
+    }
+    assert_eq!(std::fs::read_to_string(&src)?, original);
+    assert!(!src.with_extension("rs.bak").exists());
+    Ok(())
 }
 
 #[test]

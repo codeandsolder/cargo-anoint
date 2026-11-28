@@ -1,12 +1,13 @@
 //! Parser layer — extracts the full dependency tree from Cargo.toml / Cargo.lock
 //! using `cargo_metadata` for feature-aware resolution.
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
+use cargo_metadata::semver::Version;
 use cargo_metadata::{
     CargoOpt, DepKindInfo, DependencyKind, MetadataCommand, Node, NodeDep, Package, PackageId,
     Resolve,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -14,33 +15,51 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone)]
 pub struct ResolvedDep {
     pub name: String,
-    pub version: String,
+    pub version: Version,
     /// Features that are **actually enabled** in the resolved build plan.
     pub enabled_features: Vec<String>,
     /// All features **declared** by the crate (available but not necessarily enabled).
     pub available_features: Vec<String>,
     pub source: Option<String>,
     pub repository: Option<String>,
-    pub is_direct: bool,
     pub direct_kinds: Vec<DependencyKind>,
     /// For direct packages, names of active, immediate normal dependencies.
     pub normal_dependencies: Vec<String>,
 }
 
+impl ResolvedDep {
+    /// Whether the selected package declares this dependency in an included role.
+    #[must_use = "Distinguishes direct and transitive dependencies"]
+    pub const fn is_direct(&self) -> bool {
+        !self.direct_kinds.is_empty()
+    }
+    /// Whether the resolved package comes from the crates.io registry.
+    #[must_use = "Registry identity determines whether crates.io metadata applies"]
+    pub fn is_crates_io(&self) -> bool {
+        matches!(
+            self.source.as_deref(),
+            Some(
+                "registry+https://github.com/rust-lang/crates.io-index"
+                    | "sparse+https://index.crates.io/"
+            )
+        )
+    }
+}
+
 /// One Cargo package in the workspace (or the resolved root crate) plus its dependency tree.
 ///
-/// Produced before suggestion analysis runs; see Phase 3 workspace design (`docs/`).
+/// Produced before suggestion analysis runs.
 #[derive(Debug, Clone)]
 pub struct PackageResult {
     pub name: String,
-    pub version: String,
+    pub version: Version,
     pub manifest_path: PathBuf,
     pub deps: Vec<ResolvedDep>,
 }
 
 impl fmt::Display for ResolvedDep {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let tag = if self.is_direct {
+        let tag = if self.is_direct() {
             "direct"
         } else {
             "transitive"
@@ -56,73 +75,17 @@ impl fmt::Display for ResolvedDep {
     }
 }
 
-/// Get the root project's name and version from Cargo metadata.
-///
-/// # Errors
-/// Returns an error if Cargo metadata fails or no root package can be resolved.
-pub fn get_project_info(manifest_path: Option<&Path>) -> Result<(String, String)> {
-    let cmd = metadata_command(manifest_path);
-    let metadata = cmd.exec()?;
-    let root_id = metadata
-        .resolve
-        .as_ref()
-        .and_then(|r| r.root.as_ref())
-        .ok_or_else(|| anyhow::anyhow!("No root package found"))?;
-    let root_pkg = metadata
-        .packages
-        .iter()
-        .find(|p| &p.id == root_id)
-        .ok_or_else(|| anyhow::anyhow!("Root package not in packages list"))?;
-    Ok((root_pkg.name.clone(), root_pkg.version.to_string()))
-}
-
 /// Build a lookup from package ID to the resolved Node (which carries enabled features).
-fn build_node_lookup(resolve: &Resolve) -> HashMap<String, Node> {
-    resolve
-        .nodes
-        .iter()
-        .map(|n| (n.id.to_string(), n.clone()))
-        .collect()
+fn build_node_lookup(resolve: &Resolve) -> HashMap<&PackageId, &Node> {
+    resolve.nodes.iter().map(|n| (&n.id, n)).collect()
 }
 
 /// Build a map from package ID to package reference.
-fn build_pkg_lookup(metadata: &cargo_metadata::Metadata) -> HashMap<String, Package> {
-    metadata
-        .packages
-        .iter()
-        .map(|p| (p.id.to_string(), p.clone()))
-        .collect()
+fn build_pkg_lookup(metadata: &cargo_metadata::Metadata) -> HashMap<&PackageId, &Package> {
+    metadata.packages.iter().map(|p| (&p.id, p)).collect()
 }
 
-/// Parse the dependency tree for the project at `manifest_path` (resolved root crate only).
-///
-/// **Key change**: uses `resolve.nodes[].features` for the **actual enabled features**
-/// rather than `pkg.features.keys()` which only lists declared/available features.
-///
-/// # Errors
-/// Returns an error if metadata resolution fails or no root snapshot exists.
-pub fn get_deps(manifest_path: Option<&Path>) -> Result<Vec<ResolvedDep>> {
-    let snapshots = fetch_metadata_and_snapshots(
-        manifest_path,
-        SnapshotMode::RootOnly,
-        false,
-        &ResolutionOptions::default(),
-    )?;
-    snapshots
-        .into_iter()
-        .next()
-        .map(|p| p.deps)
-        .ok_or_else(|| anyhow::anyhow!("No dependency snapshot produced"))
-}
-
-/// Load dependency snapshots for workspace members according to Cargo metadata.
-///
-/// - **Root-only**: `workspace_all_members` false and `package_filters` empty — only `[package]` at the resolved root (`resolve.root`).
-/// - **All members**: `workspace_all_members` true — every entry in `metadata.workspace_members`.
-/// - **Filtered**: non-empty `package_filters` — members whose names match case-insensitively (comma-separated CLI values become one slice).
-///
-/// `all_targets` widens what counts as a "direct" dep to include `[dev-dependencies]` and
-/// `[build-dependencies]` in addition to normal `[dependencies]`.
+/// Feature and platform options for Cargo dependency resolution.
 #[derive(Debug, Default)]
 pub struct ResolutionOptions {
     pub all_features: bool,
@@ -131,39 +94,25 @@ pub struct ResolutionOptions {
     pub target: Option<String>,
 }
 
+/// Which workspace packages to analyze.
+#[derive(Clone, Copy, Debug)]
+pub enum PackageSelection<'a> {
+    /// Only the package at the selected manifest.
+    Root,
+    /// Every member of the workspace.
+    All,
+    /// Exact package names. Empty selections are invalid.
+    Names(&'a [String]),
+}
+
+/// Resolve Cargo dependency snapshots for the selected packages.
 ///
+/// With `all_targets`, direct dependencies include development and build dependencies.
 /// # Errors
 /// Returns an error if metadata resolution fails or the package selection is invalid.
 pub fn get_package_snapshots(
     manifest_path: Option<&Path>,
-    workspace_all_members: bool,
-    package_filters: &[String],
-    all_targets: bool,
-    resolution: &ResolutionOptions,
-) -> Result<Vec<PackageResult>> {
-    fetch_metadata_and_snapshots(
-        manifest_path,
-        SnapshotMode::Custom {
-            workspace_all_members,
-            filters: package_filters,
-        },
-        all_targets,
-        resolution,
-    )
-}
-
-#[derive(Clone, Copy, Debug)]
-enum SnapshotMode<'a> {
-    RootOnly,
-    Custom {
-        workspace_all_members: bool,
-        filters: &'a [String],
-    },
-}
-
-fn fetch_metadata_and_snapshots(
-    manifest_path: Option<&Path>,
-    mode: SnapshotMode<'_>,
+    selection: PackageSelection<'_>,
     all_targets: bool,
     resolution: &ResolutionOptions,
 ) -> Result<Vec<PackageResult>> {
@@ -178,7 +127,18 @@ fn fetch_metadata_and_snapshots(
         cmd.features(CargoOpt::SomeFeatures(resolution.features.clone()));
     }
     let mut args = Vec::new();
-    if lockfile_path(manifest_path).is_file() {
+    // Only the actual workspace lockfile matters. An unrelated ancestor
+    // package can have a Cargo.lock without owning this package.
+    let layout = metadata_command(manifest_path)
+        .no_deps()
+        .exec()
+        .context("discover Cargo workspace root")?;
+    if layout
+        .workspace_root
+        .join("Cargo.lock")
+        .as_std_path()
+        .try_exists()?
+    {
         args.push("--locked".to_owned());
     }
     if let Some(target) = &resolution.target {
@@ -195,11 +155,38 @@ fn fetch_metadata_and_snapshots(
     let node_map = build_node_lookup(resolve);
     let pkg_map = build_pkg_lookup(&metadata);
 
+    let targets = select_packages(&metadata, resolve, &pkg_map, selection)?;
+
+    let mut out = Vec::with_capacity(targets.len());
+    for pkg in targets {
+        let deps = resolve_deps_for_root(&pkg.id, resolve, &pkg_map, &node_map, all_targets)?;
+        out.push(PackageResult {
+            name: pkg.name.to_string(),
+            version: pkg.version.clone(),
+            manifest_path: PathBuf::from(pkg.manifest_path.as_str()),
+            deps,
+        });
+    }
+
+    Ok(out)
+}
+
+fn select_packages<'a>(
+    metadata: &'a cargo_metadata::Metadata,
+    resolve: &Resolve,
+    pkg_map: &HashMap<&PackageId, &'a Package>,
+    selection: PackageSelection<'_>,
+) -> Result<Vec<&'a Package>> {
     let workspace_packages_ordered: Vec<&Package> = metadata
         .workspace_members
         .iter()
-        .filter_map(|id| metadata.packages.iter().find(|p| &p.id == id))
-        .collect();
+        .map(|id| {
+            pkg_map
+                .get(id)
+                .copied()
+                .ok_or_else(|| anyhow::anyhow!("Workspace member {id} missing from metadata"))
+        })
+        .collect::<Result<_>>()?;
 
     let resolve_workspace_root_pkg = || -> Result<&Package> {
         let root_id = resolve
@@ -207,73 +194,50 @@ fn fetch_metadata_and_snapshots(
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("No root package in resolve"))?;
         pkg_map
-            .get(&root_id.to_string())
+            .get(root_id)
+            .copied()
             .ok_or_else(|| anyhow::anyhow!("Root package not in cargo metadata packages list"))
     };
 
-    let targets = match mode {
-        SnapshotMode::RootOnly => vec![resolve_workspace_root_pkg()?],
-        SnapshotMode::Custom {
-            workspace_all_members,
-            filters,
-        } => {
-            if workspace_all_members && filters.is_empty() {
-                workspace_packages_ordered
-            } else if !filters.is_empty() {
-                let wanted_set: HashSet<String> = filters
-                    .iter()
-                    .map(|s| s.trim().to_ascii_lowercase())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-
-                let mut matched: Vec<&Package> = workspace_packages_ordered
-                    .iter()
-                    .copied()
-                    .filter(|p| wanted_set.contains(&p.name.to_ascii_lowercase()))
-                    .collect();
-
-                matched.sort_by(|a, b| a.name.cmp(&b.name));
-
-                let mut missing = Vec::new();
-                for w in &wanted_set {
-                    if !matched
-                        .iter()
-                        .any(|p| p.name.eq_ignore_ascii_case(w.as_str()))
-                    {
-                        missing.push(w.clone());
-                    }
-                }
-
-                if !missing.is_empty() {
-                    bail!(
-                        "no workspace package(s) matching {missing:?} — available: {}",
-                        workspace_packages_ordered
-                            .iter()
-                            .map(|p| p.name.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    );
-                }
-
-                matched
-            } else {
-                vec![resolve_workspace_root_pkg()?]
-            }
+    match selection {
+        PackageSelection::Root => Ok(vec![resolve_workspace_root_pkg()?]),
+        PackageSelection::All => Ok(workspace_packages_ordered),
+        PackageSelection::Names(names) => {
+            anyhow::ensure!(
+                !names.is_empty(),
+                "workspace package selection must not be empty"
+            );
+            filter_workspace_members(&workspace_packages_ordered, names)
         }
-    };
-
-    let mut out = Vec::with_capacity(targets.len());
-    for pkg in targets {
-        let deps = resolve_deps_for_root(&pkg.id, resolve, &pkg_map, &node_map, all_targets)?;
-        out.push(PackageResult {
-            name: pkg.name.clone(),
-            version: pkg.version.to_string(),
-            manifest_path: PathBuf::from(pkg.manifest_path.as_str()),
-            deps,
-        });
     }
+}
 
-    Ok(out)
+fn filter_workspace_members<'a>(
+    workspace: &[&'a Package],
+    filters: &[String],
+) -> Result<Vec<&'a Package>> {
+    let mut missing: BTreeSet<&str> = filters.iter().map(|name| name.trim()).collect();
+    anyhow::ensure!(
+        !missing.contains(""),
+        "workspace package names must not be empty"
+    );
+    let mut matched: Vec<_> = workspace
+        .iter()
+        .copied()
+        .filter(|package| missing.remove(package.name.as_str()))
+        .collect();
+    if !missing.is_empty() {
+        bail!(
+            "no workspace package(s) matching {missing:?} — available: {}",
+            workspace
+                .iter()
+                .map(|package| package.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    matched.sort_unstable_by(|left, right| left.name.cmp(&right.name));
+    Ok(matched)
 }
 
 // Cargo metadata may retain optional edges from the lockfile even when the
@@ -296,14 +260,14 @@ fn activated_optional_aliases<'a>(package: &'a Package, node: &Node) -> HashSet<
 
 fn active_edges<'a>(
     node: &'a Node,
-    packages: &HashMap<String, Package>,
+    packages: &HashMap<&PackageId, &Package>,
 ) -> Vec<(&'a NodeDep, &'a DepKindInfo)> {
-    let parent = packages.get(&node.id.to_string());
+    let parent = packages.get(&node.id);
     let aliases = parent.map(|package| activated_optional_aliases(package, node));
     node.deps
         .iter()
         .flat_map(|edge| {
-            let child = packages.get(&edge.pkg.to_string());
+            let child = packages.get(&edge.pkg);
             let aliases = aliases.as_ref();
             edge.dep_kinds
                 .iter()
@@ -328,7 +292,7 @@ fn dependency_kind_active(
 ) -> bool {
     let mut matched = false;
     for dependency in &parent.dependencies {
-        if dependency.name != child.name
+        if child.name != dependency.name
             || dependency.kind != kind.kind
             || dependency.target != kind.target
             || !dependency.req.matches(&child.version)
@@ -359,83 +323,85 @@ fn dependency_kind_active(
 fn resolve_deps_for_root(
     root_pkg_id: &PackageId,
     resolve: &Resolve,
-    pkg_map: &HashMap<String, Package>,
-    node_map: &HashMap<String, Node>,
+    pkg_map: &HashMap<&PackageId, &Package>,
+    node_map: &HashMap<&PackageId, &Node>,
     all_targets: bool,
 ) -> Result<Vec<ResolvedDep>> {
     let root_node = node_map
-        .get(&root_pkg_id.to_string())
+        .get(root_pkg_id)
         .ok_or_else(|| anyhow::anyhow!("Root node missing in resolve.nodes"))?;
 
-    let root_edges = active_edges(root_node, pkg_map);
-    let direct_dep_ids: HashSet<String> = root_edges
-        .iter()
-        .filter(|(_, kind)| all_targets || kind.kind == DependencyKind::Normal)
-        .map(|(edge, _)| edge.pkg.to_string())
-        .collect();
+    let mut direct_roles: HashMap<&PackageId, Vec<DependencyKind>> = HashMap::new();
+    for (edge, kind) in active_edges(root_node, pkg_map) {
+        if all_targets || kind.kind == DependencyKind::Normal {
+            let roles = direct_roles.entry(&edge.pkg).or_default();
+            if !roles.contains(&kind.kind) {
+                roles.push(kind.kind);
+            }
+        }
+    }
 
     let mut reachable = HashSet::new();
-    let mut pending: Vec<_> = direct_dep_ids.iter().cloned().collect();
+    let mut pending: Vec<_> = direct_roles.keys().copied().collect();
     while let Some(id) = pending.pop() {
-        if !reachable.insert(id.clone()) {
+        if !reachable.insert(id) {
             continue;
         }
-        if let Some(node) = node_map.get(&id) {
-            pending.extend(
-                active_edges(node, pkg_map)
-                    .into_iter()
-                    .filter(|(_, kind)| kind.kind != DependencyKind::Development)
-                    .map(|(edge, _)| edge.pkg.to_string()),
-            );
-        }
+        let node = node_map
+            .get(id)
+            .ok_or_else(|| anyhow::anyhow!("Reachable dependency {id} missing from resolution"))?;
+        pending.extend(
+            active_edges(node, pkg_map)
+                .into_iter()
+                .filter(|(_, kind)| kind.kind != DependencyKind::Development)
+                .map(|(edge, _)| &edge.pkg),
+        );
     }
 
     let mut deps = Vec::new();
 
     for node in &resolve.nodes {
-        if node.id == *root_pkg_id || !reachable.contains(&node.id.to_string()) {
+        if node.id == *root_pkg_id || !reachable.contains(&node.id) {
             continue;
         }
 
-        let Some(pkg) = pkg_map.get(&node.id.to_string()) else {
-            continue;
-        };
+        let pkg = pkg_map
+            .get(&node.id)
+            .ok_or_else(|| anyhow::anyhow!("Resolved package {} missing from metadata", node.id))?;
 
-        let is_direct = direct_dep_ids.contains(&node.id.to_string());
-
-        let enabled_features: Vec<String> = node
-            .features
-            .iter()
-            .map(|s| s.as_str().to_string())
-            .collect();
+        let enabled_features = node.features.iter().map(ToString::to_string).collect();
 
         let available_features: Vec<String> = pkg.features.keys().cloned().collect();
 
         deps.push(ResolvedDep {
-            name: pkg.name.clone(),
-            version: pkg.version.to_string(),
+            name: pkg.name.to_string(),
+            version: pkg.version.clone(),
             enabled_features,
             available_features,
             source: pkg.source.as_ref().map(std::string::ToString::to_string),
             repository: pkg.repository.clone(),
-            is_direct,
-            normal_dependencies: if is_direct {
+            normal_dependencies: if direct_roles.contains_key(&node.id) {
                 active_edges(node, pkg_map)
                     .into_iter()
                     .filter(|(_, kind)| kind.kind == DependencyKind::Normal)
-                    .filter_map(|(edge, _)| pkg_map.get(&edge.pkg.to_string()))
-                    .map(|child| child.name.clone())
+                    .map(|(edge, _)| {
+                        pkg_map
+                            .get(&edge.pkg)
+                            .map(|child| child.name.to_string())
+                            .ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "Resolved package {} missing from metadata",
+                                    edge.pkg
+                                )
+                            })
+                    })
+                    .collect::<Result<BTreeSet<_>>>()?
+                    .into_iter()
                     .collect()
             } else {
                 Vec::new()
             },
-            direct_kinds: root_edges
-                .iter()
-                .filter(|(edge, kind)| {
-                    edge.pkg == node.id && (all_targets || kind.kind == DependencyKind::Normal)
-                })
-                .map(|(_, kind)| kind.kind)
-                .collect(),
+            direct_kinds: direct_roles.remove(&node.id).unwrap_or_default(),
         });
     }
 
@@ -449,24 +415,7 @@ fn metadata_command(manifest_path: Option<&Path>) -> MetadataCommand {
         cmd.manifest_path(path);
     }
 
-    if lockfile_path(manifest_path).is_file() {
-        cmd.other_options(vec!["--locked".to_string()]);
-    }
-
     cmd
-}
-
-fn lockfile_path(manifest_path: Option<&Path>) -> PathBuf {
-    let base = manifest_path
-        .and_then(Path::parent)
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let absolute = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
-    absolute
-        .ancestors()
-        .map(|p| p.join("Cargo.lock"))
-        .find(|p| p.is_file())
-        .unwrap_or_else(|| base.join("Cargo.lock"))
 }
 
 #[cfg(test)]
@@ -540,6 +489,7 @@ everything = ["parent/everything", "dep:root-provider"]
         let packages = build_pkg_lookup(&metadata);
         let mut resolve = metadata
             .resolve
+            .clone()
             .ok_or_else(|| anyhow::anyhow!("missing resolve"))?;
         let root = resolve
             .root
@@ -559,7 +509,7 @@ everything = ["parent/everything", "dep:root-provider"]
             if node.id == root {
                 node.features.clear();
             } else if packages
-                .get(&node.id.to_string())
+                .get(&node.id)
                 .is_some_and(|package| package.name == "parent")
             {
                 node.features.retain(|feature| {
@@ -588,7 +538,7 @@ everything = ["parent/everything", "dep:root-provider"]
                 "implicit-provider"
             ])
         );
-        assert_eq!(active.iter().filter(|dep| dep.is_direct).count(), 1);
+        assert_eq!(active.iter().filter(|dep| dep.is_direct()).count(), 1);
         let parent = active
             .iter()
             .find(|dep| dep.name == "parent")
@@ -609,7 +559,7 @@ everything = ["parent/everything", "dep:root-provider"]
         assert!(
             active
                 .iter()
-                .filter(|dep| !dep.is_direct)
+                .filter(|dep| !dep.is_direct())
                 .all(|dep| dep.normal_dependencies.is_empty())
         );
         Ok(())

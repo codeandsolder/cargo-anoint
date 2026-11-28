@@ -1,15 +1,17 @@
 //! Curated organization preferences and potential capability overlaps.
 use std::collections::{BTreeMap, BTreeSet};
 
+use cargo_metadata::semver::Version;
 use serde::Deserialize;
 
 use crate::parser::{PackageResult, ResolvedDep};
 use crate::suggestions::{
-    AutofixSafety, Confidence, EvidenceSource, Impact, MigrationRisk, Suggestion, SuggestionKind,
+    Confidence, EvidenceSource, Impact, MigrationRisk, Suggestion, SuggestionKind,
 };
 use cargo_metadata::DependencyKind;
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Policy {
     forks: Vec<Fork>,
     capabilities: Vec<Capability>,
@@ -20,12 +22,14 @@ struct Policy {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Fork {
     repository: String,
     packages: Vec<String>,
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Capability {
     name: String,
     providers: Vec<String>,
@@ -44,12 +48,14 @@ struct Capability {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ProviderWrapper {
     package: String,
     repository: String,
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Preference {
     packages: Vec<String>,
     #[serde(default)]
@@ -61,6 +67,7 @@ struct Preference {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FeaturePreference {
     package: String,
     #[serde(default)]
@@ -73,6 +80,7 @@ struct FeaturePreference {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct VersionFamily {
     name: String,
     members: Vec<VersionFamilyMember>,
@@ -80,19 +88,28 @@ struct VersionFamily {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct VersionFamilyMember {
     package: String,
-    version_component: usize,
+    version_component: VersionComponent,
 }
 
-fn version_component(version: &str, component: usize) -> Option<u64> {
-    version
-        .split(['-', '+'])
-        .next()?
-        .split('.')
-        .nth(component)?
-        .parse()
-        .ok()
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum VersionComponent {
+    Major,
+    Minor,
+    Patch,
+}
+
+impl VersionComponent {
+    const fn get(self, version: &Version) -> u64 {
+        match self {
+            Self::Major => version.major,
+            Self::Minor => version.minor,
+            Self::Patch => version.patch,
+        }
+    }
 }
 
 /// Cargo's resolved source is authoritative: repository metadata is often inherited
@@ -130,11 +147,11 @@ fn finding(
         current,
         recommended,
         reason,
+        condition: None,
         source: "codeandsolder dependency policy".into(),
         impact: Impact::Medium,
         confidence: Confidence::Medium,
         migration_risk: MigrationRisk::High,
-        autofix_safety: AutofixSafety::ManualOnly,
         evidence_source: EvidenceSource::Heuristic,
         package: package.map(str::to_owned),
     }
@@ -142,7 +159,7 @@ fn finding(
 
 pub fn analyze(deps: &[ResolvedDep], package: Option<&str>) -> serde_json::Result<Vec<Suggestion>> {
     let policy: Policy = serde_json::from_str(include_str!("../data/organization.json"))?;
-    let direct: Vec<_> = deps.iter().filter(|dep| dep.is_direct).collect();
+    let direct: Vec<_> = deps.iter().filter(|dep| dep.is_direct()).collect();
     let mut results = Vec::new();
     append_fork_findings(&policy.forks, deps, package, &mut results);
     append_preference_findings(&policy, deps, package, &mut results);
@@ -162,7 +179,11 @@ fn append_fork_findings(
             let sources: BTreeSet<_> = deps
                 .iter()
                 .filter(|dep| &dep.name == name)
-                .filter_map(|dep| dep.source.as_deref().map(|source| (dep.is_direct, source)))
+                .filter_map(|dep| {
+                    dep.source
+                        .as_deref()
+                        .map(|source| (dep.is_direct(), source))
+                })
                 .filter(|(_, source)| !preferred_source(source, &fork.repository))
                 .map(|(direct, source)| {
                     format!("{}: {source}", if direct { "direct" } else { "transitive" })
@@ -191,7 +212,7 @@ fn append_preference_findings(
         for name in &preference.packages {
             if deps.iter().any(|dep| {
                 &dep.name == name
-                    && (dep.is_direct || preference.include_transitive)
+                    && (dep.is_direct() || preference.include_transitive)
                     && !preference
                         .satisfied_repository
                         .as_ref()
@@ -215,7 +236,7 @@ fn append_preference_findings(
     for preference in &policy.feature_preferences {
         for dep in deps {
             if dep.name == preference.package
-                && (dep.is_direct || preference.include_transitive)
+                && (dep.is_direct() || preference.include_transitive)
                 && preference
                     .preferred_feature
                     .as_ref()
@@ -245,7 +266,7 @@ fn append_version_findings(
 ) {
     // Cargo metadata may include optional or target-specific packages. These
     // findings describe the selected resolution, not guaranteed compiled units.
-    let mut versions = BTreeMap::<&str, BTreeSet<&str>>::new();
+    let mut versions = BTreeMap::<&str, BTreeSet<&Version>>::new();
     for dep in deps {
         versions.entry(&dep.name).or_default().insert(&dep.version);
     }
@@ -256,7 +277,11 @@ fn append_version_findings(
                 "one compatible resolved version where upstream constraints permit".into(),
                 format!(
                     "Multiple versions in the reachable Cargo resolution: {}. Inspect inverse dependency trees, enabled features and target/build/dev roles before consolidating; do not force incompatible APIs.",
-                    resolved.iter().copied().collect::<Vec<_>>().join(", ")
+                    resolved
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ),
                 SuggestionKind::ModernAlternative,
                 package,
@@ -271,13 +296,12 @@ fn append_version_findings(
         for member in &family.members {
             if let Some(resolved) = versions.get(member.package.as_str()) {
                 for version in resolved {
-                    if let Some(generation) = version_component(version, member.version_component) {
-                        generations
-                            .entry(generation)
-                            .or_default()
-                            .insert(format!("{}@{version}", member.package));
-                        members.insert(member.package.as_str());
-                    }
+                    let generation = member.version_component.get(version);
+                    generations
+                        .entry(generation)
+                        .or_default()
+                        .insert(format!("{}@{version}", member.package));
+                    members.insert(member.package.as_str());
                 }
             }
         }
@@ -312,7 +336,7 @@ const ROLES: [DependencyKind; 3] = [
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct ProviderOrigin<'a> {
     name: &'a str,
-    version: &'a str,
+    version: &'a Version,
     source: Option<&'a str>,
 }
 
@@ -483,7 +507,7 @@ pub fn analyze_workspace(snapshots: &[PackageResult]) -> serde_json::Result<Vec<
             snapshots
                 .iter()
                 .map(|snap| {
-                    let direct: Vec<_> = snap.deps.iter().filter(|dep| dep.is_direct).collect();
+                    let direct: Vec<_> = snap.deps.iter().filter(|dep| dep.is_direct()).collect();
                     (snap.name.as_str(), capability.selections(&direct, role))
                 })
                 .collect::<Vec<_>>()
@@ -555,12 +579,11 @@ mod tests {
     fn dep(name: &str, source: Option<&str>, direct: bool) -> ResolvedDep {
         ResolvedDep {
             name: name.into(),
-            version: "1.0.0".into(),
+            version: cargo_metadata::semver::Version::new(1, 0, 0),
             enabled_features: vec![],
             available_features: vec![],
             source: source.map(str::to_owned),
             repository: Some("https://github.com/upstream/project".into()),
-            is_direct: direct,
             normal_dependencies: vec![],
             direct_kinds: if direct {
                 vec![cargo_metadata::DependencyKind::Normal]
@@ -594,9 +617,7 @@ mod tests {
             let hits = analyze(&[first.clone(), second.clone()], Some("app"));
             assert!(
                 hits.iter()
-                    .any(|f| f.kind == SuggestionKind::AdvisoryOverlap
-                        && f.current == pair
-                        && !f.is_auto_fixable()),
+                    .any(|f| f.kind == SuggestionKind::AdvisoryOverlap && f.current == pair),
                 "{pair}"
             );
             assert!(
@@ -718,7 +739,7 @@ mod tests {
     fn snapshot(name: &str, deps: Vec<ResolvedDep>) -> PackageResult {
         PackageResult {
             name: name.into(),
-            version: "1.0.0".into(),
+            version: Version::new(1, 0, 0),
             manifest_path: format!("{name}/Cargo.toml").into(),
             deps,
         }
@@ -821,7 +842,7 @@ mod tests {
         assert_eq!(combos.len(), 1);
         assert_eq!(combos[0].current, "wreq+reqwest");
         assert_eq!(combos[0].package.as_deref(), Some("app"));
-        assert!(!combos[0].is_auto_fixable());
+
         assert!(
             analyze(
                 &[
@@ -869,7 +890,6 @@ mod tests {
         for name in removed {
             assert!(findings.iter().any(|f| f.current == name), "missing {name}");
         }
-        assert!(findings.iter().all(|f| !f.is_auto_fixable()));
     }
 
     #[test]
@@ -905,11 +925,7 @@ mod tests {
             None,
         );
         for name in ["linked-hash-map", "chrono", "leptos_axum"] {
-            assert!(
-                findings
-                    .iter()
-                    .any(|finding| finding.current == name && !finding.is_auto_fixable())
-            );
+            assert!(findings.iter().any(|finding| finding.current == name));
         }
     }
 
@@ -924,7 +940,7 @@ mod tests {
         assert!(
             findings
                 .iter()
-                .all(|f| f.kind == SuggestionKind::FeatureOptimization && !f.is_auto_fixable())
+                .all(|f| f.kind == SuggestionKind::FeatureOptimization)
         );
     }
 
@@ -996,21 +1012,34 @@ mod tests {
     }
 
     #[test]
+    fn release_generation_is_typed_and_ignores_prerelease_metadata() -> anyhow::Result<()> {
+        let version = Version::parse("1.263.4-rc.1+build.2")?;
+        assert_eq!(VersionComponent::Major.get(&version), 1);
+        assert_eq!(VersionComponent::Minor.get(&version), 263);
+        assert_eq!(VersionComponent::Patch.get(&version), 4);
+        assert!(serde_json::from_str::<VersionComponent>("3").is_err());
+        assert!(serde_json::from_str::<VersionComponent>(r#""invalid""#).is_err());
+        Ok(())
+    }
+
+    #[test]
     fn reports_version_splits_without_gating_the_resolution() {
         let mut old = dep("wasmparser", None, false);
-        old.version = "0.248.0".into();
+        old.version = cargo_metadata::semver::Version::new(0, 248, 0);
         let mut new = old.clone();
-        new.version = "0.263.0".into();
+        new.version = cargo_metadata::semver::Version::new(0, 263, 0);
         let mut wat = dep("wat", None, true);
-        wat.version = "1.263.0".into();
+        wat.version = cargo_metadata::semver::Version::new(1, 263, 0);
         let mut wast = dep("wast", None, false);
-        wast.version = "263.0.0".into();
+        wast.version = cargo_metadata::semver::Version::new(263, 0, 0);
         assert!(analyze(&[new.clone(), wat.clone(), wast.clone()], None).is_empty());
         let findings = analyze(&[old, new, wat, wast], None);
         assert_eq!(findings.len(), 2);
-        assert!(findings.iter().all(|f| f.impact == Impact::Low
-            && f.kind != SuggestionKind::CapabilityOverlap
-            && !f.is_auto_fixable()));
+        assert!(
+            findings
+                .iter()
+                .all(|f| f.impact == Impact::Low && f.kind != SuggestionKind::CapabilityOverlap)
+        );
         assert!(
             findings
                 .iter()
