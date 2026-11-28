@@ -460,9 +460,7 @@ fn append_overlap_findings(
 
 /// Report independently selected providers in different selected workspace members.
 /// This does not establish that the members link into a common executable.
-pub(crate) fn analyze_workspace(
-    snapshots: &[PackageResult],
-) -> serde_json::Result<Vec<Suggestion>> {
+pub fn analyze_workspace(snapshots: &[PackageResult]) -> serde_json::Result<Vec<Suggestion>> {
     let policy: Policy = serde_json::from_str(include_str!("../data/organization.json"))?;
     let mut findings = Vec::new();
     if snapshots.len() < 2 {
