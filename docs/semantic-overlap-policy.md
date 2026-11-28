@@ -19,6 +19,12 @@ a guaranteed linked binary, or a recommendation to remove a benchmark oracle.
 | STEP Part 21 | [step-p21](https://docs.rs/crate/step-p21/latest) provides syntax and entity tables; the [organization fork](https://github.com/codeandsolder/step-p21-fast) is already the native reader dependency. [Cadmpeg codec](https://docs.rs/crate/cadmpeg-codec-step/latest) provides a CAD IR reader/writer; [cadmpeg-step](https://docs.rs/cadmpeg-step/latest/cadmpeg_step/) covers the same format. | Use independent differential readers for geometry, topology, assembly and loss-reporting checks. Native writer and a complete CAD codec are not interchangeable without corpus evidence. |
 | Completion I/O | [Compio](https://docs.rs/crate/compio/latest) is completion-based; Tokio handles general asynchronous orchestration. Compio's facade and runtime crate are complementary. | Dedicated disk I/O, io_uring/IOCP, ownership/lifetime and network/timer runtime integration. Existing general-runtime direct-pair gates remain unchanged. |
 
+| Glob matching | `glob`, `globset`, `wax`, `fast-glob`, `glob-match`: compare syntax, path semantics, encoding and multi-pattern needs; not equivalent to walking. | Ignore-aware path traversal and filename glob matching are distinct. |
+| Shell argument processing | `shlex`, `shell-words`, `shellwords`, `brush-parser`, `shellish_parse`: investigate shared lexical operations, not just package names. | Full shell AST parsing and literal argv quoting are distinct contracts. |
+| WebSocket transport | `wreq` with `ws`, `tokio-tungstenite`, `async-tungstenite`, `tokio-websockets`, `fastwebsockets`, `soketto`, `websocket`. Prefer shared HTTP/TLS client when appropriate. | Test servers and separate server frameworks may be necessary. Wreq without `ws` is not a WebSocket provider. |
+| Unix syscall wrappers | `nix`, `rustix`: consolidate only after checking required syscall coverage. | User/group lookup, platform-specific calls and already-transitive dependencies may justify both. |
+| Text diff | `similar`, `diff`, `diffy`, `imara-diff`: compare edit scripts, input granularity and patch handling. | Computing a diff and applying a patch need not use the same library. |
+
 The organization's October 23 interim database results (not a final publication
 ranking) favor SurrealKV/Fjall/RocksDB on the complete sync generalist matrix,
 redb/heed on ordered scans, and SQLite/Turso on relational record workloads.

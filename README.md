@@ -51,9 +51,11 @@ configuration after fetching dependencies if network isolation is required.
   provider. Reviewed organization wrappers may expose an active immediate
   normal dependency as an advisory provider selection, using the resolved
   source rather than guessing from the wrapper name or latest revision.
-  Local path packages have no authoritative remote source.
+  Local path packages have no authoritative remote source. Feature-conditioned
+  providers are counted only with the relevant enabled capability (e.g. Wreq `ws`).
 - Workload-sensitive capabilities (hashers, traversal, logging, Git, date/time,
-  persistence, Argon2, STEP, completion I/O) are advisory-only for the focused
+  persistence, Argon2, STEP, completion I/O, glob matching, shell arguments,
+  WebSockets, syscall wrappers, text diff) are advisory-only for the focused
   gate. Provider divergence between selected workspace members is also advisory,
   because different members need not link into the same executable.
   JSON reports list these in `workspace_suggestions`; same-member advisories
