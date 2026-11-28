@@ -391,6 +391,14 @@ mod tests {
     }
 
     #[test]
+    fn retired_fontations_fork_is_not_recommended() {
+        let registry = Some("registry+https://github.com/rust-lang/crates.io-index");
+        let deps = ["font-types", "read-fonts", "skrifa", "write-fonts", "skera"]
+            .map(|name| dep(name, registry, false));
+        assert!(analyze(&deps, Some("pdf-redox")).is_empty());
+    }
+
+    #[test]
     fn reports_independent_providers_but_not_layers() {
         let findings = analyze(
             &[
