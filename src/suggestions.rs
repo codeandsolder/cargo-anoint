@@ -46,6 +46,8 @@ pub enum SuggestionKind {
     ComboWin,
     /// Multiple independent providers of a curated capability.
     CapabilityOverlap,
+    /// A workload-sensitive or indirect independent-provider overlap; never a focused gate failure.
+    AdvisoryOverlap,
     /// Crate is unmaintained — switch to maintained fork/successor.
     Unmaintained,
 }
@@ -123,7 +125,8 @@ const fn impact_for(kind: &SuggestionKind) -> Impact {
         SuggestionKind::Unmaintained | SuggestionKind::StdReplacement => Impact::High,
         SuggestionKind::ModernAlternative
         | SuggestionKind::ComboWin
-        | SuggestionKind::CapabilityOverlap => Impact::Medium,
+        | SuggestionKind::CapabilityOverlap
+        | SuggestionKind::AdvisoryOverlap => Impact::Medium,
         SuggestionKind::FeatureOptimization => Impact::Low,
     }
 }
@@ -242,6 +245,16 @@ pub fn analyze_for_package(
     Ok(suggestions)
 }
 
+/// Review provider divergence across selected workspace members.
+///
+/// # Errors
+/// Returns an error if the embedded organization policy cannot be decoded.
+pub fn analyze_workspace(
+    snapshots: &[crate::parser::PackageResult],
+) -> serde_json::Result<Vec<Suggestion>> {
+    crate::organization::analyze_workspace(snapshots)
+}
+
 /// Recursively scans `.rs` files in the project to determine if the crate is imported or used.
 /// Checks `src`, `tests`, `benches`, and `examples` directories relative to the `manifest_path`.
 fn is_crate_used_in_source(manifest_path: Option<&Path>, crate_name: &str) -> bool {
@@ -332,6 +345,7 @@ mod tests {
                 source: Some("registry".into()),
                 repository: None,
                 is_direct: true,
+                normal_dependencies: vec![],
                 direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
             ResolvedDep {
@@ -342,6 +356,7 @@ mod tests {
                 source: Some("registry".into()),
                 repository: None,
                 is_direct: true,
+                normal_dependencies: vec![],
                 direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
         ];
@@ -364,6 +379,7 @@ mod tests {
                 source: Some("registry".into()),
                 repository: None,
                 is_direct: true,
+                normal_dependencies: vec![],
                 direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
             ResolvedDep {
@@ -375,6 +391,7 @@ mod tests {
                 source: Some("registry".into()),
                 repository: None,
                 is_direct: true,
+                normal_dependencies: vec![],
                 direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
         ];
@@ -420,6 +437,7 @@ mod tests {
             source: Some("registry".into()),
             repository: None,
             is_direct: true,
+            normal_dependencies: vec![],
             direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
         }];
 
@@ -443,6 +461,7 @@ mod tests {
             source: Some("registry".into()),
             repository: None,
             is_direct: false,
+            normal_dependencies: vec![],
             direct_kinds: vec![], // transitive — should be ignored
         }];
 
@@ -465,6 +484,7 @@ mod tests {
                 source: Some("registry".into()),
                 repository: None,
                 is_direct: true,
+                normal_dependencies: vec![],
                 direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
             ResolvedDep {
@@ -475,6 +495,7 @@ mod tests {
                 source: Some("registry".into()),
                 repository: None,
                 is_direct: true,
+                normal_dependencies: vec![],
                 direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
             ResolvedDep {
@@ -485,6 +506,7 @@ mod tests {
                 source: Some("registry".into()),
                 repository: None,
                 is_direct: true,
+                normal_dependencies: vec![],
                 direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
         ];
@@ -511,6 +533,7 @@ mod tests {
                 source: Some("registry".into()),
                 repository: None,
                 is_direct: true,
+                normal_dependencies: vec![],
                 direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
             ResolvedDep {
@@ -521,6 +544,7 @@ mod tests {
                 source: Some("registry".into()),
                 repository: None,
                 is_direct: true,
+                normal_dependencies: vec![],
                 direct_kinds: vec![cargo_metadata::DependencyKind::Normal],
             },
         ];
@@ -556,6 +580,7 @@ mod tests {
             source: None,
             repository: None,
             is_direct: false,
+            normal_dependencies: vec![],
             direct_kinds: vec![],
         };
         let findings = analyze(None, &[dep], &load_rules().expect("embedded rules"))

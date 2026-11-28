@@ -48,7 +48,19 @@ configuration after fetching dependencies if network isolation is required.
 - Capability overlap checks are per workspace member and dependency role.
   They report individual provider pairs, excluding known complementary layers.
   A crate reachable only transitively is not treated as an independent direct
-  provider. Local path packages have no authoritative remote source.
+  provider. Reviewed organization wrappers may expose an active immediate
+  normal dependency as an advisory provider selection, using the resolved
+  source rather than guessing from the wrapper name or latest revision.
+  Local path packages have no authoritative remote source. Feature-conditioned
+  providers are counted only with the relevant enabled capability (e.g. Wreq `ws`).
+- Workload-sensitive capabilities (hashers, traversal, logging, Git, date/time,
+  persistence, Argon2, STEP, completion I/O, glob matching, shell arguments,
+  WebSockets, syscall wrappers, text diff) are advisory-only for the focused
+  gate. Provider divergence between selected workspace members is also advisory,
+  because different members need not link into the same executable.
+  JSON reports list these in `workspace_suggestions`; same-member advisories
+  remain in the member's `dependency_suggestions`. Both use
+  `kind: "AdvisoryOverlap"`. See [reviewed choices](docs/semantic-overlap-policy.md).
 - `--all-targets` adds build and development roles; it does not combine them
   with the normal role into one provider set.
 
@@ -78,7 +90,17 @@ reason = "Benchmark comparing two independent client implementations"
 The exception applies only to the named workspace member and exact unordered
 pair. A general ignored dependency does not silently bypass the capability
 gate. The gate is independent of unused-dependency, duplicate-version and
-security checks.
+security checks. `AdvisoryOverlap` does not trigger `--fail-on-overlap`
+(ordinary explicit `--fail-on` severity filters still apply).
+Use the same member-specific exception for advisory pairs, or separately:
+
+```toml
+[[allow_workspace_overlap]]
+providers = ["ahash", "rustc-hash"]
+reason = "Distinct programs with independently benchmarked key distributions"
+```
+
+Workspace exceptions do not suppress a member-level overlap.
 
 ## Reviewed upstream recommendations
 
