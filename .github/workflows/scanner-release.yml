@@ -23,12 +23,12 @@ jobs:
           persist-credentials: false
       - name: Resolve quarantined toolchain
         id: compiler
-        uses: codeandsolder/ci-workflows/.github/actions/resolve-rust-toolchain@91183d106cd3b1f251fa52d9f3b78429af6f9e7c # main
+        uses: codeandsolder/ci-workflows/.github/actions/resolve-rust-toolchain@1ef8b180d04fbeb8c095e8d701f8a5107472370e # main
       - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
         with:
           toolchain: ${{ steps.compiler.outputs.channel }}
       - name: Setup mandatory sccache
-        uses: codeandsolder/ci-workflows/.github/actions/setup-sccache@91183d106cd3b1f251fa52d9f3b78429af6f9e7c # main
+        uses: codeandsolder/ci-workflows/.github/actions/setup-sccache@1ef8b180d04fbeb8c095e8d701f8a5107472370e # main
         with:
           rust-toolchain: ${{ steps.compiler.outputs.channel }}
           cache-scope: scanner-release
@@ -54,4 +54,4 @@ jobs:
           gh release create "$tag" cargo-anoint-linux-x86_64 cargo-anoint-linux-x86_64.sha256 --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "CI scanner $GITHUB_SHA" --notes "Linux x86_64 scanner built from $GITHUB_SHA on Ubuntu 24.04 using the locked dependency graph." --latest=false
       - name: Finalize mandatory sccache
         if: always()
-        uses: codeandsolder/ci-workflows/.github/actions/finalize-sccache@91183d106cd3b1f251fa52d9f3b78429af6f9e7c # main
+        uses: codeandsolder/ci-workflows/.github/actions/finalize-sccache@1ef8b180d04fbeb8c095e8d701f8a5107472370e # main
