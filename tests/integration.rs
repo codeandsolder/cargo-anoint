@@ -1889,6 +1889,7 @@ reason = "Not this package"
 
 #[test]
 fn advisory_overlap_reports_workspace_and_preserves_focused_gate() {
+    use std::fs;
     let tmp = tempfile::tempdir().expect("temp workspace");
     let root = tmp.path();
     fs::write(
