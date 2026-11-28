@@ -29,6 +29,9 @@ struct Fork {
 struct Capability {
     name: String,
     providers: Vec<String>,
+    /// A provider that exposes this capability only when all listed features are enabled.
+    #[serde(default)]
+    provider_features: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     complementary_pairs: Vec<[String; 2]>,
     /// Absent: gate all non-complementary direct pairs. Present: gate only listed pairs.
@@ -362,7 +365,16 @@ impl Capability {
     ) -> ProviderSelections<'a> {
         let mut selected = BTreeMap::<_, BTreeSet<_>>::new();
         for dep in deps.iter().filter(|dep| dep.direct_kinds.contains(&role)) {
-            if self.providers.contains(&dep.name) {
+            if self.providers.contains(&dep.name)
+                && self
+                    .provider_features
+                    .get(&dep.name)
+                    .is_none_or(|required| {
+                        required
+                            .iter()
+                            .all(|feature| dep.enabled_features.contains(feature))
+                    })
+            {
                 selected
                     .entry(dep.name.as_str())
                     .or_default()
@@ -570,6 +582,11 @@ mod tests {
             ("argon2", "argon2-rust"),
             ("step-p21", "cadmpeg-codec-step"),
             ("tokio", "compio-runtime"),
+            ("glob", "globset"),
+            ("shlex", "brush-parser"),
+            ("nix", "rustix"),
+            ("similar", "imara-diff"),
+            ("tokio-tungstenite", "fastwebsockets"),
         ] {
             let first = dep(left, None, true);
             let mut second = dep(right, None, true);
@@ -594,6 +611,22 @@ mod tests {
                     .any(|f| f.kind == SuggestionKind::AdvisoryOverlap && f.current == pair)
             );
         }
+    }
+
+    #[test]
+    fn websocket_client_capability_requires_enabled_feature_and_same_role() {
+        let mut http = dep("wreq", None, true);
+        let mut ws = dep("tokio-tungstenite", None, true);
+        let overlaps = |deps: &[ResolvedDep]| {
+            analyze(deps, Some("app")).into_iter().any(|f| {
+                f.kind == SuggestionKind::AdvisoryOverlap && f.current == "wreq+tokio-tungstenite"
+            })
+        };
+        assert!(!overlaps(&[http.clone(), ws.clone()]));
+        http.enabled_features.push("ws".into());
+        assert!(overlaps(&[http.clone(), ws.clone()]));
+        ws.direct_kinds = vec![DependencyKind::Development];
+        assert!(!overlaps(&[http, ws]));
     }
 
     #[test]
