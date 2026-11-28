@@ -334,6 +334,98 @@ mod tests {
     }
 
     #[test]
+    fn reviewed_modernization_rules_are_unique_and_manual_only() {
+        let rules = load_rules().expect("embedded rules");
+        let mut patterns = HashSet::new();
+        for rule in &rules {
+            assert!(
+                patterns.insert(&rule.pattern),
+                "duplicate rule: {}",
+                rule.pattern
+            );
+        }
+        for name in [
+            "memoffset",
+            "fs2",
+            "array-macro",
+            "wee_alloc",
+            "proc-macro-error",
+            "proc-macro-error2",
+            "rustls-pemfile",
+            "im-rc",
+            "winapi",
+            "unsafe-libyaml",
+            "rust_socketio",
+        ] {
+            let rule = rules
+                .iter()
+                .find(|rule| rule.pattern == name)
+                .expect("reviewed rule");
+            assert_eq!(rule.autofix_safety, AutofixSafety::ManualOnly);
+            assert!(rule.include_transitive);
+            assert!(rule.source.starts_with("https://"));
+        }
+        for name in ["proc-macro-error", "proc-macro-error2"] {
+            let rule = rules
+                .iter()
+                .find(|rule| rule.pattern == name)
+                .expect("diagnostic rule");
+            assert_eq!(rule.kind, SuggestionKind::Unmaintained);
+            assert_eq!(rule.replacement, "syn::Error / manyhow");
+        }
+    }
+
+    #[test]
+    fn modernization_advice_respects_direct_and_transitive_scope() {
+        let rules = load_rules().expect("embedded rules");
+        for is_direct in [false, true] {
+            let deps: Vec<_> = [
+                "memoffset",
+                "proc-macro-error2",
+                "version_check",
+                "natord",
+                "num-traits",
+            ]
+            .into_iter()
+            .map(|name| ResolvedDep {
+                name: name.into(),
+                version: "0.1.0".into(),
+                enabled_features: vec![],
+                available_features: vec![],
+                source: Some("registry".into()),
+                repository: None,
+                is_direct,
+                normal_dependencies: vec![],
+                direct_kinds: if is_direct {
+                    vec![cargo_metadata::DependencyKind::Normal]
+                } else {
+                    vec![]
+                },
+            })
+            .collect();
+            let findings = analyze_for_package(None, &deps, &rules, Some("consumer"))
+                .expect("embedded policy");
+            for name in ["memoffset", "proc-macro-error2"] {
+                assert!(findings.iter().any(|finding| finding.current == name
+                    && finding.package.as_deref() == Some("consumer")));
+            }
+            for name in ["version_check", "natord"] {
+                assert_eq!(
+                    findings.iter().any(|finding| finding.current == name),
+                    is_direct
+                );
+            }
+            assert!(
+                !findings
+                    .iter()
+                    .any(|finding| finding.current == "num-traits")
+            );
+            assert!(findings.iter().all(|finding| !finding.is_auto_fixable()
+                && finding.kind != SuggestionKind::CapabilityOverlap));
+        }
+    }
+
+    #[test]
     fn test_analyze_single_crate_match() {
         let rules = load_rules().unwrap();
         let deps = vec![
