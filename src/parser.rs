@@ -424,7 +424,7 @@ fn resolve_deps_for_root(
                     .into_iter()
                     .filter(|(_, kind)| kind.kind == DependencyKind::Normal)
                     .filter_map(|(edge, _)| pkg_map.get(&edge.pkg.to_string()))
-                    .map(|child| child.name.clone())
+                    .map(|child| child.name.to_string())
                     .collect()
             } else {
                 Vec::new()
