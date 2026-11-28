@@ -1,7 +1,7 @@
 //! Discover statically named out-of-line modules from Cargo target roots.
 //!
 //! Rust resolves explicit paths differently from ordinary module names:
-//! https://doc.rust-lang.org/reference/items/modules.html#module-source-filenames
+//! <https://doc.rust-lang.org/reference/items/modules.html#module-source-filenames>
 
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
@@ -30,7 +30,7 @@ impl ModuleFile {
     }
 }
 
-pub(crate) fn discover(
+pub fn discover(
     roots: BTreeSet<PathBuf>,
     package_root: &Path,
     config: &CodeAuditConfig,
