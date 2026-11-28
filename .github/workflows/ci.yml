@@ -10,25 +10,23 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  strict-rust:
-    uses: codeandsolder/rust-skills2/.github/workflows/strict-rust.yml@7d0552029497cf094787c3593f804d5bce137c4b # main
+  check:
+    uses: codeandsolder/ci-workflows/.github/workflows/rust-sccache.yml@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
     with:
       rust-toolchain: nightly-2026-11-23
-      cargo-args: "--locked --workspace --all-targets"
-      apt-packages: "clang libclang-dev cmake"
-      allow-test-panics: true
-  check:
-    uses: codeandsolder/ci-workflows/.github/workflows/rust-sccache.yml@f79aef2a560a2c1c0f06f3c657f690f778040156 # main
-    with:
-      test-impact-mode: none
+      apt-packages: clang libclang-dev cmake
+      strict-suites: |
+        [{"name":"native","cargo":["--locked","--workspace","--all-targets"],"allow-test-panics":true}]
+      test-suites: |
+        [{"name":"native","cargo":["--locked","--workspace"],"doctests":["--locked","--workspace"]}]
       command: |
-        cargo test --locked
         cargo install --path . --debug --locked
         cargo anoint --help
         cargo anoint --workspace --offline --fail-on-overlap
@@ -39,9 +37,9 @@ jobs:
   merge-gate:
     name: CI merge gate
     if: ${{ always() }}
-    needs: [strict-rust, check]
-    uses: codeandsolder/ci-workflows/.github/workflows/merge-gate.yml@945fa80aba9612faf36918d309369316db9b13e7 # main
+    needs: [check]
+    uses: codeandsolder/ci-workflows/.github/workflows/merge-gate.yml@1293f1c247f07a14a85859f908b4f6b7e2553922 # main
     with:
       needs-json: ${{ toJSON(needs) }}
       expected-results: |
-        [["strict-rust", "success"], ["check", "success"]]
+        [["check", "success"]]

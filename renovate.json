@@ -3,5 +3,20 @@
   "extends": [
     "github>codeandsolder/ci-workflows:renovate-fleet",
     "github>codeandsolder/ci-workflows:renovate-native-automerge"
+  ],
+  "packageRules": [
+    {
+      "description": "Preserve the scanner binary Ubuntu 24.04 runtime ABI floor used by shared CI consumers",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchFileNames": [
+        ".github/workflows/scanner-release.yml"
+      ],
+      "matchPackageNames": [
+        "ubuntu"
+      ],
+      "enabled": false
+    }
   ]
 }

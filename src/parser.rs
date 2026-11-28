@@ -161,7 +161,7 @@ pub fn get_package_snapshots(
     for pkg in targets {
         let deps = resolve_deps_for_root(&pkg.id, resolve, &pkg_map, &node_map, all_targets)?;
         out.push(PackageResult {
-            name: pkg.name.clone(),
+            name: pkg.name.to_string(),
             version: pkg.version.clone(),
             manifest_path: PathBuf::from(pkg.manifest_path.as_str()),
             deps,
@@ -292,7 +292,7 @@ fn dependency_kind_active(
 ) -> bool {
     let mut matched = false;
     for dependency in &parent.dependencies {
-        if dependency.name != child.name
+        if child.name != dependency.name
             || dependency.kind != kind.kind
             || dependency.target != kind.target
             || !dependency.req.matches(&child.version)
@@ -374,7 +374,7 @@ fn resolve_deps_for_root(
         let available_features: Vec<String> = pkg.features.keys().cloned().collect();
 
         deps.push(ResolvedDep {
-            name: pkg.name.clone(),
+            name: pkg.name.to_string(),
             version: pkg.version.clone(),
             enabled_features,
             available_features,
@@ -387,7 +387,7 @@ fn resolve_deps_for_root(
                     .map(|(edge, _)| {
                         pkg_map
                             .get(&edge.pkg)
-                            .map(|child| child.name.clone())
+                            .map(|child| child.name.to_string())
                             .ok_or_else(|| {
                                 anyhow::anyhow!(
                                     "Resolved package {} missing from metadata",
