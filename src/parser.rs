@@ -369,7 +369,7 @@ fn resolve_deps_for_root(
             .get(&node.id)
             .ok_or_else(|| anyhow::anyhow!("Resolved package {} missing from metadata", node.id))?;
 
-        let enabled_features = node.features.clone();
+        let enabled_features = node.features.iter().map(ToString::to_string).collect();
 
         let available_features: Vec<String> = pkg.features.keys().cloned().collect();
 
