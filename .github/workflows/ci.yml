@@ -19,7 +19,7 @@ jobs:
   strict-rust:
     uses: codeandsolder/rust-skills2/.github/workflows/strict-rust.yml@7d0552029497cf094787c3593f804d5bce137c4b # main
     with:
-      rust-toolchain: nightly-2026-11-19
+      rust-toolchain: nightly-2026-11-23
       cargo-args: "--locked --workspace --all-targets"
       apt-packages: "clang libclang-dev cmake"
       allow-test-panics: true
