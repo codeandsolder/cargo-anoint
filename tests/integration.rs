@@ -1886,3 +1886,102 @@ reason = "Not this package"
         "exception must not apply to unrelated packages"
     );
 }
+
+#[test]
+fn advisory_overlap_reports_workspace_and_preserves_focused_gate() {
+    let tmp = tempfile::tempdir().expect("temp workspace");
+    let root = tmp.path();
+    fs::write(
+        root.join("Cargo.toml"),
+        r#"
+[workspace]
+resolver = "2"
+members = ["a", "b"]
+exclude = ["ahash", "rustc-hash", "log", "tracing"]
+"#,
+    )
+    .expect("workspace manifest");
+    for (name, deps) in [
+        (
+            "a",
+            "[dependencies]\nahash = {path = \"../ahash\"}\nlog = {path = \"../log\"}\ntracing = {path = \"../tracing\"}",
+        ),
+        (
+            "b",
+            "[dependencies]\nrustc-hash = {path = \"../rustc-hash\"}",
+        ),
+        ("ahash", ""),
+        ("rustc-hash", ""),
+        ("log", ""),
+        ("tracing", ""),
+    ] {
+        fs::create_dir_all(root.join(name).join("src")).expect("crate src");
+        fs::write(root.join(name).join("src/lib.rs"), "").expect("crate lib");
+        fs::write(
+            root.join(name).join("Cargo.toml"),
+            format!(
+                "[package]\nname = {name:?}\nversion = \"0.1.0\"\nedition = \"2021\"\n{deps}\n"
+            ),
+        )
+        .expect("crate manifest");
+    }
+    let scan = || {
+        let mut cmd = cargo_anoint_cmd();
+        let out = cmd
+            .current_dir(root)
+            .args(["--workspace", "--offline", "--json", "--fail-on-overlap"])
+            .output()
+            .expect("run gate");
+        assert!(
+            out.status.success(),
+            "advisory findings must not fail the focused gate: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&out.stdout).expect("JSON")
+    };
+    let report = scan();
+    let workspace = report["workspace_suggestions"]
+        .as_array()
+        .expect("workspace findings");
+    assert_eq!(workspace.len(), 1);
+    assert_eq!(workspace[0]["kind"], "AdvisoryOverlap");
+    assert_eq!(workspace[0]["current"], "rustc-hash+ahash");
+    let a = report["packages"]
+        .as_array()
+        .expect("packages")
+        .iter()
+        .find(|p| p["name"] == "a")
+        .expect("a");
+    assert!(
+        a["dependency_suggestions"]
+            .as_array()
+            .expect("member findings")
+            .iter()
+            .any(|f| f["kind"] == "AdvisoryOverlap" && f["current"] == "log+tracing")
+    );
+    fs::write(
+        root.join("anoint.toml"),
+        r#"
+ignore_packages = ["log", "ahash"]
+[[allow_workspace_overlap]]
+providers = ["rustc-hash", "ahash"]
+reason = "Independent applications"
+"#,
+    )
+    .expect("workspace exception");
+    let report = scan();
+    assert!(report.get("workspace_suggestions").is_none());
+    let a = report["packages"]
+        .as_array()
+        .expect("packages")
+        .iter()
+        .find(|p| p["name"] == "a")
+        .expect("a");
+    assert!(
+        a["dependency_suggestions"]
+            .as_array()
+            .expect("member findings")
+            .iter()
+            .any(|f| f["kind"] == "AdvisoryOverlap" && f["current"] == "log+tracing")
+    );
+}

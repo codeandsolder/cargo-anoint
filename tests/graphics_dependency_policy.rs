@@ -13,6 +13,7 @@ fn dependency(name: &str, direct: bool) -> ResolvedDep {
         source: None,
         repository: None,
         is_direct: direct,
+        normal_dependencies: vec![],
         direct_kinds: if direct {
             vec![DependencyKind::Normal]
         } else {

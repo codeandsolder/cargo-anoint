@@ -166,6 +166,7 @@ struct DependencyScan {
     snapshots: Vec<cargo_anoint::parser::PackageResult>,
     per_package: Vec<Vec<cargo_anoint::suggestions::Suggestion>>,
     all: Vec<cargo_anoint::suggestions::Suggestion>,
+    workspace_suggestions: Vec<cargo_anoint::suggestions::Suggestion>,
     code_audit_config: cargo_anoint::code_audit::CodeAuditConfig,
     offline: bool,
 }
@@ -202,11 +203,24 @@ impl DependencyScan {
             per_pkg_suggestions.push(apply_policy(raw, policy));
         }
 
-        let all = per_pkg_suggestions.iter().flatten().cloned().collect();
+        let workspace_suggestions = cargo_anoint::suggestions::analyze_workspace(&snapshots)?;
+        let workspace_suggestions = match policy {
+            Some(policy) => {
+                cargo_anoint::policy::apply_workspace_policy(workspace_suggestions, policy)
+            }
+            None => workspace_suggestions,
+        };
+        let all = per_pkg_suggestions
+            .iter()
+            .flatten()
+            .chain(&workspace_suggestions)
+            .cloned()
+            .collect();
         Ok(Self {
             snapshots,
             per_package: per_pkg_suggestions,
             all,
+            workspace_suggestions,
             code_audit_config: cargo_anoint::code_audit::config_from_policy(policy),
             offline: opts.offline || policy.is_some_and(|p| p.settings.offline),
         })
@@ -272,6 +286,7 @@ impl DependencyScan {
             cargo_anoint_version: env!("CARGO_PKG_VERSION"),
             workspace_scan: opts.workspace || self.snapshots.len() > 1,
             packages: packages_for_json,
+            workspace_suggestions: &self.workspace_suggestions,
             code_audit: merged_audit.as_ref(),
             hardcoded_values: None,
             security_advisories: advisories_for_json,
@@ -350,6 +365,7 @@ impl DependencyScan {
             .collect();
 
         cargo_anoint::output::render_packages_modernization(&views, &intel);
+        cargo_anoint::output::render_workspace_suggestions(&self.workspace_suggestions, &intel);
 
         // Security advisory check (osv.dev) — one batch call for all direct deps
         if !self.offline && !opts.no_advisories {
@@ -520,6 +536,7 @@ fn run_code_audit_command(opts: &cli::CodeAuditOpts) -> Result<()> {
             cargo_anoint_version: env!("CARGO_PKG_VERSION"),
             workspace_scan: false,
             packages: Vec::new(),
+            workspace_suggestions: &[],
             code_audit: Some(&report),
             hardcoded_values: if opts.hardcoded { Some(&bs_hits) } else { None },
             security_advisories: Vec::new(),

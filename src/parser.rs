@@ -23,6 +23,8 @@ pub struct ResolvedDep {
     pub repository: Option<String>,
     pub is_direct: bool,
     pub direct_kinds: Vec<DependencyKind>,
+    /// For direct packages, names of active, immediate normal dependencies.
+    pub normal_dependencies: Vec<String>,
 }
 
 /// One Cargo package in the workspace (or the resolved root crate) plus its dependency tree.
@@ -417,6 +419,16 @@ fn resolve_deps_for_root(
             source: pkg.source.as_ref().map(std::string::ToString::to_string),
             repository: pkg.repository.clone(),
             is_direct,
+            normal_dependencies: if is_direct {
+                active_edges(node, pkg_map)
+                    .into_iter()
+                    .filter(|(_, kind)| kind.kind == DependencyKind::Normal)
+                    .filter_map(|(edge, _)| pkg_map.get(&edge.pkg.to_string()))
+                    .map(|child| child.name.clone())
+                    .collect()
+            } else {
+                Vec::new()
+            },
             direct_kinds: root_edges
                 .iter()
                 .filter(|(edge, kind)| {
@@ -577,6 +589,29 @@ everything = ["parent/everything", "dep:root-provider"]
             ])
         );
         assert_eq!(active.iter().filter(|dep| dep.is_direct).count(), 1);
+        let parent = active
+            .iter()
+            .find(|dep| dep.name == "parent")
+            .ok_or_else(|| anyhow::anyhow!("missing parent"))?;
+        assert_eq!(
+            parent
+                .normal_dependencies
+                .iter()
+                .map(String::as_str)
+                .collect::<HashSet<_>>(),
+            HashSet::from([
+                "required-provider",
+                "explicit-provider",
+                "strong-provider",
+                "implicit-provider"
+            ])
+        );
+        assert!(
+            active
+                .iter()
+                .filter(|dep| !dep.is_direct)
+                .all(|dep| dep.normal_dependencies.is_empty())
+        );
         Ok(())
     }
 }

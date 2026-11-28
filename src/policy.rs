@@ -34,6 +34,9 @@ pub struct Policy {
     /// Reviewed exceptions for a specific package and exact overlapping provider set.
     #[serde(default)]
     pub allow_overlap: Vec<OverlapException>,
+    /// Reviewed exceptions for exact provider pairs across workspace members.
+    #[serde(default)]
+    pub allow_workspace_overlap: Vec<WorkspaceOverlapException>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,6 +44,19 @@ pub struct OverlapException {
     pub package: String,
     pub providers: Vec<String>,
     pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceOverlapException {
+    pub providers: Vec<String>,
+    pub reason: String,
+}
+
+fn valid_overlap_pair(providers: &[String], reason: &str) -> bool {
+    providers.len() == 2
+        && providers.iter().all(|provider| !provider.trim().is_empty())
+        && providers[0] != providers[1]
+        && !reason.trim().is_empty()
 }
 
 /// A custom rule from anoint.toml.
@@ -133,19 +149,17 @@ pub fn try_load_policy(path: &Path) -> anyhow::Result<Policy> {
     let policy: Policy = toml_edit::de::from_str(&content)
         .map_err(|err| anyhow::anyhow!("failed to parse policy {}: {err}", path.display()))?;
     for entry in &policy.allow_overlap {
-        if entry.package.trim().is_empty()
-            || entry.reason.trim().is_empty()
-            || entry.providers.len() != 2
-            || entry.providers.iter().any(|p| p.trim().is_empty())
-            || entry
-                .providers
-                .iter()
-                .collect::<std::collections::BTreeSet<_>>()
-                .len()
-                != entry.providers.len()
-        {
+        if entry.package.trim().is_empty() || !valid_overlap_pair(&entry.providers, &entry.reason) {
             anyhow::bail!(
                 "invalid allow_overlap in {}: provide package, exactly two distinct providers, and a reason",
+                path.display()
+            );
+        }
+    }
+    for entry in &policy.allow_workspace_overlap {
+        if !valid_overlap_pair(&entry.providers, &entry.reason) {
+            anyhow::bail!(
+                "invalid allow_workspace_overlap in {}: provide exactly two distinct providers and a reason",
                 path.display()
             );
         }
@@ -164,7 +178,9 @@ pub fn apply_policy(
     let filtered: Vec<_> = suggestions
         .into_iter()
         .filter(|s| {
-            if s.kind == crate::suggestions::SuggestionKind::CapabilityOverlap {
+            if s.kind == crate::suggestions::SuggestionKind::CapabilityOverlap
+                || s.kind == crate::suggestions::SuggestionKind::AdvisoryOverlap
+            {
                 let providers: std::collections::BTreeSet<_> =
                     suggestion_crates(&s.current).collect();
                 return !policy.allow_overlap.iter().any(|entry| {
@@ -194,6 +210,25 @@ pub fn apply_policy(
         .collect();
 
     filtered
+}
+
+/// Filter workspace divergence findings using only reviewed workspace exceptions.
+#[must_use = "Returns the filtered workspace findings"]
+pub fn apply_workspace_policy(
+    suggestions: Vec<crate::suggestions::Suggestion>,
+    policy: &Policy,
+) -> Vec<crate::suggestions::Suggestion> {
+    suggestions
+        .into_iter()
+        .filter(|suggestion| {
+            let providers: std::collections::BTreeSet<_> =
+                suggestion_crates(&suggestion.current).collect();
+            !policy.allow_workspace_overlap.iter().any(|entry| {
+                valid_overlap_pair(&entry.providers, &entry.reason)
+                    && providers == entry.providers.iter().map(String::as_str).collect()
+            })
+        })
+        .collect()
 }
 
 fn suggestion_crates(current: &str) -> impl Iterator<Item = &str> {
