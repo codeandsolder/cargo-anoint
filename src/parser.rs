@@ -71,7 +71,7 @@ pub fn get_project_info(manifest_path: Option<&Path>) -> Result<(String, String)
         .iter()
         .find(|p| &p.id == root_id)
         .ok_or_else(|| anyhow::anyhow!("Root package not in packages list"))?;
-    Ok((root_pkg.name.clone(), root_pkg.version.to_string()))
+    Ok((root_pkg.name.to_string(), root_pkg.version.to_string()))
 }
 
 /// Build a lookup from package ID to the resolved Node (which carries enabled features).
@@ -264,7 +264,7 @@ fn fetch_metadata_and_snapshots(
     for pkg in targets {
         let deps = resolve_deps_for_root(&pkg.id, resolve, &pkg_map, &node_map, all_targets)?;
         out.push(PackageResult {
-            name: pkg.name.clone(),
+            name: pkg.name.to_string(),
             version: pkg.version.to_string(),
             manifest_path: PathBuf::from(pkg.manifest_path.as_str()),
             deps,
@@ -326,7 +326,7 @@ fn dependency_kind_active(
 ) -> bool {
     let mut matched = false;
     for dependency in &parent.dependencies {
-        if dependency.name != child.name
+        if child.name != dependency.name
             || dependency.kind != kind.kind
             || dependency.target != kind.target
             || !dependency.req.matches(&child.version)
@@ -410,7 +410,7 @@ fn resolve_deps_for_root(
         let available_features: Vec<String> = pkg.features.keys().cloned().collect();
 
         deps.push(ResolvedDep {
-            name: pkg.name.clone(),
+            name: pkg.name.to_string(),
             version: pkg.version.to_string(),
             enabled_features,
             available_features,
